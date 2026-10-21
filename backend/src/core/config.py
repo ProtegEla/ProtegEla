@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     # Criptografia de Campos em Repouso (LGPD: e-mail, telefones de contatos)
     FIELD_ENCRYPTION_KEY: str = "dGhpcy1pcy1hLWRldmVsb3BtZW50LWtleS1mb3ItZmVybmV0PQ=="
 
+    # Chave HMAC para busca determinística de campos cifrados (ex.: unicidade de e-mail)
+    FIELD_LOOKUP_KEY: str = "dev_lookup_key_change_in_production_min_32_chars"
+
     # Banco de Dados PostgreSQL
     POSTGRES_USER: str = "protegela_user"
     POSTGRES_PASSWORD: str = "protegela_secret_dev_pass"
@@ -38,7 +41,7 @@ class Settings(BaseSettings):
         "postgresql+asyncpg://protegela_user:protegela_secret_dev_pass@localhost:5432/protegela_db"
     )
     DATABASE_SYNC_URL: str = (
-        "postgresql://protegela_user:protegela_secret_dev_pass@localhost:5432/protegela_db"
+        "postgresql+psycopg2://protegela_user:protegela_secret_dev_pass@localhost:5432/protegela_db"
     )
 
     # CORS

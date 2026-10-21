@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta, timezone
 import re
 from typing import Any, Dict, Optional
+import hashlib
+import hmac
 
 from cryptography.fernet import Fernet
 from jose import JWTError, jwt
@@ -118,3 +120,9 @@ def decrypt_sensitive_field(encrypted_value: str) -> str:
     """Decifra dados sensíveis cifrados em repouso."""
     fernet = get_fernet()
     return fernet.decrypt(encrypted_value.encode("utf-8")).decode("utf-8")
+
+
+def compute_lookup_hash(plain_value: str) -> str:
+    """Gera hash HMAC-SHA256"""
+    normalized = plain_value.strip().lower()
+    return hmac.new(settings.FIELD_LOOKUP_KEY.encode("utf-8"),normalized.encode("utf-8"),hashlib.sha256).hexdigest()

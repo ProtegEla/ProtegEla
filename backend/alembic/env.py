@@ -13,6 +13,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from src.core.config import settings
 from src.core.database import Base
 
+from src.modules.users.models import User, EmergencyContact
+
 config = context.config
 
 if config.config_file_name is not None:
