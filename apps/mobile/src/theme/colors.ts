@@ -3,21 +3,28 @@
  * Prioriza alto contraste para situações de estresse e emergência (RNF08).
  */
 export const colors = {
-  primary: "#6A1B9A", // Roxo principal
+  // Paleta oficial Figma
+  screenBackground: "#E9E4F2", // Fundo geral das telas
+  inputBackground: "#F8FAFC",  // Fundo dos campos de input
+  primaryPurple: "#8055B5",    // Roxo de destaque / Checkbox
+  primaryAction: "#0F766E",    // Teal escuro / Botão de ação (Login, Cadastre-se)
+
+  // Cores semânticas e base
+  primary: "#8055B5",
   primaryLight: "#F3E5F5",
   primaryDark: "#4A148C",
-  secondary: "#00897B", // Verde azulado de apoio
-  background: "#FAFAFA",
-  surface: "#FFFFFF",
-  text: "#212121",
-  textMuted: "#757575",
-  border: "#E0E0E0",
+  secondary: "#0F766E",
+  background: "#E9E4F2",
+  surface: "#F8FAFC",
+  text: "#1E293B",
+  textMuted: "#64748B",
+  border: "#CBD5E1",
 
-  // Cores semânticas de risco e emergência
-  danger: "#D32F2F", // Botão de pânico e risco extremo
-  warning: "#F57C00", // Risco moderado / alerta
-  success: "#388E3C", // Zonas seguras / delegacias
-  info: "#1976D2", // Orientações e dicas
+  // Feedback e estados
+  danger: "#EF4444",
+  warning: "#F59E0B",
+  success: "#10B981",
+  info: "#3B82F6",
 
   // Níveis de Zonas de Risco (RN02)
   riskModerate: "#FFB74D",

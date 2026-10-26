@@ -10,10 +10,12 @@ export default function RootLayout() {
       <Stack
         screenOptions={{
           headerShown: false,
-          contentStyle: { backgroundColor: "#FAFAFA" },
+          contentStyle: { backgroundColor: "#E9E4F2" },
         }}
       >
         <Stack.Screen name="index" />
+        <Stack.Screen name="register" />
+        <Stack.Screen name="map" />
       </Stack>
     </SafeAreaProvider>
   );

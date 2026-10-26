@@ -1,134 +1,225 @@
-import React from "react";
-import { StyleSheet, Text, View, SafeAreaView, TouchableOpacity } from "react-native";
+import React, { useState } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  Alert,
+} from "react-native";
+import { useRouter } from "expo-router";
 import { theme } from "../src/theme";
+import { Button, Input, Checkbox, LinkText } from "../src/components/ui";
 
 /**
- * Rota Principal (Tela Inicial) do ProtegEla.
- *
- * Demonstra a arquitetura do cliente para acesso sem login (RF03/RF04),
- * exibição de mapa interativo (RF05) e botão de pânico fixo em tela (RF14).
+ * Tela de Login ("Bem-vinda!")
+ * Construída estritamente com os componentes reutilizáveis de src/components/ui/
+ * e parâmetros da paleta do Figma (Fundo #E9E4F2, inputs #F8FAFC, botão #0F766E).
  */
-export default function HomeScreen() {
+export default function LoginScreen() {
+  const router = useRouter();
+
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [rememberMe, setRememberMe] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  // Estados de erro para validação dupla no front
+  const [emailError, setEmailError] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+
+  const validateForm = (): boolean => {
+    let isValid = true;
+    setEmailError("");
+    setPasswordError("");
+
+    if (!email.trim()) {
+      setEmailError("Informe seu e-mail");
+      isValid = false;
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setEmailError("Digite um e-mail válido");
+      isValid = false;
+    }
+
+    if (!password) {
+      setPasswordError("Informe sua senha");
+      isValid = false;
+    } else if (password.length < 6) {
+      setPasswordError("A senha deve ter ao menos 6 caracteres");
+      isValid = false;
+    }
+
+    return isValid;
+  };
+
+  const handleLogin = async () => {
+    if (!validateForm()) return;
+
+    setLoading(true);
+    try {
+      // Simulação / chamada futura ao serviço de autenticação
+      setTimeout(() => {
+        setLoading(false);
+        Alert.alert("Sucesso", "Login efetuado com sucesso!");
+      }, 800);
+    } catch {
+      setLoading(false);
+      Alert.alert("Erro", "Falha ao realizar login. Tente novamente.");
+    }
+  };
+
+  const handleForgotPassword = () => {
+    Alert.alert("Recuperar Senha", "Instruções serão enviadas para o seu e-mail.");
+  };
+
+  const handleAnonymousAccess = () => {
+    router.push("/map");
+  };
+
   return (
-    <SafeAreaView style={styles.container}>
-      {/* Cabeçalho com Acesso / Login */}
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.brandTitle}>ProtegEla</Text>
-          <Text style={styles.brandSubtitle}>São Paulo - Navegação Segura</Text>
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      style={styles.keyboardView}
+    >
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.headerContainer}>
+          <Text style={styles.title}>Bem-vinda!</Text>
         </View>
-        <TouchableOpacity style={styles.loginButton} activeOpacity={0.8}>
-          <Text style={styles.loginButtonText}>Entrar</Text>
-        </TouchableOpacity>
-      </View>
 
-      {/* Área Central: Placeholder Estrutural do Mapa Interativo (RF05) */}
-      <View style={styles.mapContainer}>
-        <Text style={styles.mapPlaceholderText}>
-          Área do Mapa Interativo (OpenStreetMap / Overpass API)
-        </Text>
-        <Text style={styles.mapHelpText}>
-          Camada de exibição de zonas de risco e rotas seguras (features/map).
-        </Text>
-      </View>
+        <View style={styles.formContainer}>
+          <Input
+            placeholder="E-mail"
+            value={email}
+            onChangeText={(text) => {
+              setEmail(text);
+              if (emailError) setEmailError("");
+            }}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            autoCorrect={false}
+            error={emailError}
+          />
 
-      {/* Barra Inferior com Ações e Botão de Pânico (RF14) */}
-      <View style={styles.bottomBar}>
-        <TouchableOpacity
-          style={styles.panicButton}
-          activeOpacity={0.85}
-          accessibilityLabel="Botão de Pânico. Toque para acionar socorro imediato."
-        >
-          <Text style={styles.panicButtonText}>PÂNICO (SOS)</Text>
-          <Text style={styles.panicSubtext}>Ligação para Emergência (RF14)</Text>
-        </TouchableOpacity>
-      </View>
-    </SafeAreaView>
+          <Input
+            placeholder="Senha"
+            value={password}
+            onChangeText={(text) => {
+              setPassword(text);
+              if (passwordError) setPasswordError("");
+            }}
+            secureTextEntry
+            autoCapitalize="none"
+            error={passwordError}
+          />
+
+          <View style={styles.optionsRow}>
+            <LinkText
+              text="Esqueceu a senha?"
+              underline={false}
+              align="left"
+              textStyle={styles.forgotPasswordText}
+              onPress={handleForgotPassword}
+            />
+          </View>
+
+          <View style={styles.checkboxContainer}>
+            <Checkbox
+              label="Lembrar de mim"
+              checked={rememberMe}
+              onToggle={setRememberMe}
+            />
+          </View>
+
+          <View style={styles.actionButtonContainer}>
+            <Button
+              title="Login"
+              variant="primary"
+              onPress={handleLogin}
+              isLoading={loading}
+              style={styles.loginButton}
+            />
+          </View>
+
+          <View style={styles.footerContainer}>
+            <LinkText
+              text="Não tem conta?"
+              actionText="Cadastre-se"
+              underline={true}
+              onPress={() => router.push("/register")}
+            />
+
+            <View style={styles.anonymousSpacing} />
+
+            <LinkText
+              text="Acessar sem login"
+              underline={false}
+              onPress={handleAnonymousAccess}
+              textStyle={styles.anonymousText}
+            />
+          </View>
+        </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  keyboardView: {
     flex: 1,
-    backgroundColor: theme.colors.background,
+    backgroundColor: theme.colors.screenBackground,
   },
-  header: {
-    paddingHorizontal: theme.spacing.lg,
-    paddingVertical: theme.spacing.md,
-    flexDirection: "row",
-    justifyContent: "space-between",
+  scrollContent: {
+    flexGrow: 1,
+    justifyContent: "center",
+    paddingHorizontal: theme.spacing.xl,
+    paddingVertical: theme.spacing.xxl,
+  },
+  headerContainer: {
     alignItems: "center",
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-    backgroundColor: theme.colors.surface,
+    marginBottom: theme.spacing.xxl,
   },
-  brandTitle: {
-    fontSize: theme.typography.sizes.xl,
-    fontWeight: theme.typography.weights.bold,
-    color: theme.colors.primary,
+  title: {
+    fontSize: theme.typography.sizes.title,
+    fontWeight: theme.typography.weights.extrabold,
+    color: theme.colors.text,
+    fontFamily: theme.typography.fontFamily,
   },
-  brandSubtitle: {
+  formContainer: {
+    width: "100%",
+  },
+  optionsRow: {
+    alignItems: "flex-start",
+    marginBottom: theme.spacing.xs,
+  },
+  forgotPasswordText: {
     fontSize: theme.typography.sizes.xs,
     color: theme.colors.textMuted,
+  },
+  checkboxContainer: {
+    marginBottom: theme.spacing.xl,
+  },
+  actionButtonContainer: {
+    alignItems: "center",
+    marginBottom: theme.spacing.xl,
   },
   loginButton: {
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.xs,
-    backgroundColor: theme.colors.primaryLight,
-    borderRadius: theme.spacing.sm,
+    width: "60%",
+    minHeight: 52,
   },
-  loginButtonText: {
-    color: theme.colors.primary,
-    fontWeight: theme.typography.weights.semibold,
-  },
-  mapContainer: {
-    flex: 1,
-    justifyContent: "center",
+  footerContainer: {
     alignItems: "center",
-    backgroundColor: "#E8EAF6",
-    margin: theme.spacing.md,
-    borderRadius: theme.spacing.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    padding: theme.spacing.lg,
+    marginTop: theme.spacing.sm,
   },
-  mapPlaceholderText: {
-    fontSize: theme.typography.sizes.md,
-    fontWeight: theme.typography.weights.semibold,
-    color: theme.colors.text,
-    textAlign: "center",
+  anonymousSpacing: {
+    height: theme.spacing.lg,
   },
-  mapHelpText: {
+  anonymousText: {
     fontSize: theme.typography.sizes.sm,
-    color: theme.colors.textMuted,
-    textAlign: "center",
-    marginTop: theme.spacing.xs,
-  },
-  bottomBar: {
-    padding: theme.spacing.lg,
-    backgroundColor: theme.colors.surface,
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
-  },
-  panicButton: {
-    backgroundColor: theme.colors.danger,
-    paddingVertical: theme.spacing.md,
-    borderRadius: theme.spacing.md,
-    alignItems: "center",
-    elevation: 4,
-    shadowColor: theme.colors.danger,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-  },
-  panicButtonText: {
-    color: "#FFFFFF",
-    fontSize: theme.typography.sizes.lg,
-    fontWeight: theme.typography.weights.bold,
-  },
-  panicSubtext: {
-    color: "#FFCDD2",
-    fontSize: theme.typography.sizes.xs,
-    marginTop: 2,
+    color: theme.colors.text,
   },
 });

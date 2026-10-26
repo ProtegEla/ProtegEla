@@ -68,17 +68,17 @@ export const Button: React.FC<ButtonProps> = ({
 const styles = StyleSheet.create({
   base: {
     minHeight: 48, // Alvo de toque acessível (RNF08)
-    borderRadius: theme.spacing.sm,
+    borderRadius: 24, // Borda arredondada suave do Figma
     justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: theme.spacing.lg,
     paddingVertical: theme.spacing.sm,
   },
   primary: {
-    backgroundColor: theme.colors.primary,
+    backgroundColor: theme.colors.primaryAction,
   },
   secondary: {
-    backgroundColor: theme.colors.secondary,
+    backgroundColor: theme.colors.primaryPurple,
   },
   danger: {
     backgroundColor: theme.colors.danger,
@@ -86,19 +86,20 @@ const styles = StyleSheet.create({
   outline: {
     backgroundColor: "transparent",
     borderWidth: 1.5,
-    borderColor: theme.colors.primary,
+    borderColor: theme.colors.primaryAction,
   },
   disabled: {
     opacity: 0.5,
   },
   textBase: {
     fontSize: theme.typography.sizes.md,
-    fontWeight: theme.typography.weights.semibold,
+    fontWeight: theme.typography.weights.bold,
+    fontFamily: theme.typography.fontFamily,
   },
   textSolid: {
     color: "#FFFFFF",
   },
   textOutline: {
-    color: theme.colors.primary,
+    color: theme.colors.primaryAction,
   },
 });
