@@ -1,13 +1,18 @@
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import UTC, date, datetime, time
 from unittest.mock import AsyncMock, Mock
-from uuid import uuid4
+from uuid import uuid1, uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
-from geoalchemy2.shape import to_shape
+from geoalchemy2.shape import from_shape, to_shape
+from shapely.geometry import Point
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.core.exceptions import AppException, BusinessRuleException
+from src.core.exceptions import (
+    AppException,
+    BusinessRuleException,
+    EntityNotFoundException,
+)
 from src.modules.reports.models import IncidentPeriod, ReportCategory
 from src.modules.reports.service import CreateReportData, ReportService
 
@@ -174,3 +179,78 @@ async def test_persistence_failure_rolls_back(
     with pytest.raises(RuntimeError, match="database failure"):
         await service.create(data, author_id=uuid4(), device_id=uuid4())
     session.rollback.assert_awaited_once()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("anonymous", [True, False])
+async def test_details_only_return_public_data(session: Mock, anonymous: bool) -> None:
+    row = {
+        "id": uuid4(),
+        "location": from_shape(Point(-46.633308, -23.55052), srid=4326),
+        "address_reference": None,
+        "category": ReportCategory.ASSEDIO,
+        "description": None,
+        "incident_date": date(2000, 1, 1),
+        "incident_period": IncidentPeriod.NOITE,
+        "incident_time": None,
+        "is_anonymous": anonymous,
+        "created_at": datetime(2026, 10, 26, 17, tzinfo=UTC),
+        "confirmations_count": 0,
+    }
+    result = Mock()
+    result.mappings.return_value.one_or_none.return_value = row
+    session.execute.return_value = result
+
+    details = await ReportService(session).get_details(row["id"])
+
+    assert set(asdict(details)) == {
+        "id",
+        "latitude",
+        "longitude",
+        "address_reference",
+        "category",
+        "description",
+        "incident_date",
+        "incident_period",
+        "incident_time",
+        "is_anonymous",
+        "created_at",
+        "confirmations_count",
+    }
+    assert details.id == row["id"]
+    assert details.latitude == -23.55052
+    assert details.longitude == -46.633308
+    assert details.is_anonymous is anonymous
+    assert details.incident_time is None
+    assert details.description is None
+    assert details.address_reference is None
+    assert details.confirmations_count == 0
+    assert details.created_at == row["created_at"]
+    session.execute.assert_awaited_once()
+    session.add.assert_not_called()
+    session.commit.assert_not_awaited()
+    session.rollback.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_details_return_not_found_without_writing(session: Mock) -> None:
+    result = Mock()
+    result.mappings.return_value.one_or_none.return_value = None
+    session.execute.return_value = result
+    with pytest.raises(EntityNotFoundException) as error:
+        await ReportService(session).get_details(uuid4())
+    assert error.value.code == "NOT_FOUND"
+    assert error.value.status_code == 404
+    session.add.assert_not_called()
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("report_id", ["invalid", None, uuid1()])
+async def test_details_reject_invalid_uuid_without_querying(
+    session: Mock, report_id: object
+) -> None:
+    with pytest.raises(BusinessRuleException) as error:
+        await ReportService(session).get_details(report_id)
+    assert error.value.details[0]["field"] == "report_id"
+    session.execute.assert_not_called()

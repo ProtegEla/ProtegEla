@@ -1,8 +1,9 @@
-"""Persistência dos incidentes comunitários (RF09).
+"""Persistência dos incidentes e interações comunitárias (RF07/RF09).
 
 A autoria é obrigatória mesmo quando a publicação é anônima. A chave
 estrangeira depende do modelo real de usuárias e de sua política de exclusão.
-Confirmações, denúncias e zonas de risco pertencem a entregas posteriores.
+A mesma identidade não pode confirmar e denunciar o mesmo relato.
+Zonas de risco permanecem sob responsabilidade de outro módulo.
 """
 
 from datetime import date, datetime, time
@@ -10,7 +11,19 @@ from enum import Enum
 from uuid import UUID, uuid4
 
 from geoalchemy2 import Geometry, WKBElement
-from sqlalchemy import Boolean, Date, DateTime, Index, String, Time, Uuid, func
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    Time,
+    UniqueConstraint,
+    Uuid,
+    false,
+    func,
+)
 from sqlalchemy import Enum as SQLAlchemyEnum
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -29,6 +42,11 @@ class IncidentPeriod(str, Enum):
     MANHA = "manha"
     TARDE = "tarde"
     NOITE = "noite"
+
+
+class ReportInteractionKind(str, Enum):
+    CONFIRMATION = "confirmation"
+    ABUSE = "abuse"
 
 
 class Report(Base):
@@ -75,6 +93,47 @@ class Report(Base):
     )
     incident_time: Mapped[time | None] = mapped_column(Time(timezone=False))
     is_anonymous: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    is_hidden: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ReportInteraction(Base):
+    """Uma confirmação ou denúncia por usuária/relato, nunca ambas.
+
+    A chave estrangeira de user_id aguarda o modelo real de usuárias. A ligação
+    com o relato já é verificada pelo banco, sem exclusão em cascata implícita.
+    """
+
+    __tablename__ = "report_interactions"
+    __table_args__ = (
+        UniqueConstraint(
+            "report_id", "user_id", name="uq_report_interactions_report_user"
+        ),
+        Index("ix_report_interactions_report_kind", "report_id", "kind"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    report_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("reports.id", name="fk_report_interactions_report_id"),
+        nullable=False,
+    )
+    user_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    kind: Mapped[ReportInteractionKind] = mapped_column(
+        SQLAlchemyEnum(
+            ReportInteractionKind,
+            values_callable=lambda enum: [item.value for item in enum],
+            native_enum=False,
+            create_constraint=True,
+            validate_strings=True,
+            name="report_interaction_kind",
+        ),
+        nullable=False,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

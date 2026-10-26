@@ -1,4 +1,4 @@
-"""Criação de incidentes; HTTP e autenticação ficam fora do caso de uso."""
+"""Criação, consulta e interações de incidentes, sem responsabilidades HTTP."""
 
 import hashlib
 import math
@@ -9,13 +9,24 @@ from typing import NoReturn
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from geoalchemy2.shape import from_shape
+from geoalchemy2.shape import from_shape, to_shape
 from shapely.geometry import Point
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.exceptions import AppException, BusinessRuleException
-from src.modules.reports.models import IncidentPeriod, Report, ReportCategory
+from src.core.exceptions import (
+    AppException,
+    BusinessRuleException,
+    EntityNotFoundException,
+    ForbiddenException,
+)
+from src.modules.reports.models import (
+    IncidentPeriod,
+    Report,
+    ReportCategory,
+    ReportInteraction,
+    ReportInteractionKind,
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -31,12 +42,30 @@ class CreateReportData:
     incident_time: time | None = None
 
 
+@dataclass(frozen=True, kw_only=True)
+class ReportDetails:
+    """Projeção pública sem identidade interna, denúncias ou estado de moderação."""
+
+    id: UUID
+    latitude: float
+    longitude: float
+    address_reference: str | None
+    category: ReportCategory
+    description: str | None
+    incident_date: date
+    incident_period: IncidentPeriod
+    incident_time: time | None
+    is_anonymous: bool
+    created_at: datetime
+    confirmations_count: int
+
+
 def sao_paulo_today() -> date:
     return datetime.now(ZoneInfo("America/Sao_Paulo")).date()
 
 
 class ReportService:
-    """Usa uma sessão por requisição; confirma ou reverte a transação de criação.
+    """Usa uma sessão por requisição; confirma ou reverte transações de escrita.
 
     A identidade recebida deve ter sido autenticada e consultada pelo chamador.
     O serviço não transforma um UUID recebido do cliente em autenticação.
@@ -49,6 +78,126 @@ class ReportService:
     ) -> None:
         self.session = session
         self.today = today
+
+    async def get_details(self, report_id: UUID) -> ReportDetails:
+        """Consulta pública em um único snapshot, sem exigir identidade autenticada."""
+        self._validate_uuid(report_id, "report_id")
+        confirmations = (
+            select(func.count(ReportInteraction.id))
+            .where(
+                ReportInteraction.report_id == Report.id,
+                ReportInteraction.kind == ReportInteractionKind.CONFIRMATION,
+            )
+            .correlate(Report)
+            .scalar_subquery()
+        )
+        result = await self.session.execute(
+            select(
+                Report.id,
+                Report.location,
+                Report.address_reference,
+                Report.category,
+                Report.description,
+                Report.incident_date,
+                Report.incident_period,
+                Report.incident_time,
+                Report.is_anonymous,
+                Report.created_at,
+                confirmations.label("confirmations_count"),
+            )
+            .where(Report.id == report_id, Report.is_hidden.is_(False))
+            .execution_options(autoflush=False)
+        )
+        row = result.mappings().one_or_none()
+        if row is None:
+            raise EntityNotFoundException("Relato não encontrado.")
+        point = to_shape(row["location"])
+        return ReportDetails(
+            id=row["id"],
+            latitude=point.y,
+            longitude=point.x,
+            address_reference=row["address_reference"],
+            category=row["category"],
+            description=row["description"],
+            incident_date=row["incident_date"],
+            incident_period=row["incident_period"],
+            incident_time=row["incident_time"],
+            is_anonymous=row["is_anonymous"],
+            created_at=row["created_at"],
+            confirmations_count=row["confirmations_count"],
+        )
+
+    async def confirm(self, report_id: UUID, *, user_id: UUID) -> None:
+        await self._register_interaction(
+            report_id, user_id=user_id, kind=ReportInteractionKind.CONFIRMATION
+        )
+
+    async def report_abuse(self, report_id: UUID, *, user_id: UUID) -> None:
+        await self._register_interaction(
+            report_id, user_id=user_id, kind=ReportInteractionKind.ABUSE
+        )
+
+    async def _register_interaction(
+        self, report_id: UUID, *, user_id: UUID, kind: ReportInteractionKind
+    ) -> None:
+        self._validate_uuid(report_id, "report_id")
+        self._validate_uuid(user_id, "user_id")
+        try:
+            # Serializa interações do relato, inclusive de usuárias diferentes,
+            # para avaliar a RN06 e a visibilidade na mesma transação.
+            report = await self.session.scalar(
+                select(Report)
+                .where(Report.id == report_id, Report.is_hidden.is_(False))
+                .with_for_update()
+                .execution_options(populate_existing=True, autoflush=False)
+            )
+            if report is None:
+                raise EntityNotFoundException("Relato não encontrado.")
+            if report.author_id == user_id:
+                raise ForbiddenException(
+                    "A autora não pode confirmar ou denunciar o próprio relato."
+                )
+            existing = await self.session.scalar(
+                select(ReportInteraction.kind).where(
+                    ReportInteraction.report_id == report_id,
+                    ReportInteraction.user_id == user_id,
+                )
+            )
+            if existing is not None:
+                if existing != kind:
+                    raise AppException(
+                        "Já existe uma interação de outro tipo para este relato.",
+                        code="INTERACTION_CONFLICT",
+                        status_code=409,
+                    )
+                # Repetições não renovam a data nem criam outra interação.
+                await self.session.commit()
+                return
+
+            self.session.add(
+                ReportInteraction(
+                    report_id=report_id,
+                    user_id=user_id,
+                    kind=kind,
+                    created_at=func.clock_timestamp(),
+                )
+            )
+            await self.session.flush()
+            if kind == ReportInteractionKind.ABUSE:
+                result = await self.session.execute(
+                    select(ReportInteraction.kind, func.count(ReportInteraction.id))
+                    .where(ReportInteraction.report_id == report_id)
+                    .group_by(ReportInteraction.kind)
+                )
+                counts = dict(result.all())
+                confirmations = counts.get(ReportInteractionKind.CONFIRMATION, 0)
+                abuses = counts.get(ReportInteractionKind.ABUSE, 0)
+                if 10 * abuses > 3 * confirmations:
+                    report.is_hidden = True
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
 
     async def create(
         self, data: CreateReportData, *, author_id: UUID, device_id: UUID

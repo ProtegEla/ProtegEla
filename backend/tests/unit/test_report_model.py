@@ -3,7 +3,13 @@
 import pytest
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import InstrumentedAttribute
-from src.modules.reports.models import IncidentPeriod, Report, ReportCategory
+from src.modules.reports.models import (
+    IncidentPeriod,
+    Report,
+    ReportCategory,
+    ReportInteraction,
+    ReportInteractionKind,
+)
 
 
 @pytest.mark.parametrize(
@@ -17,6 +23,8 @@ from src.modules.reports.models import IncidentPeriod, Report, ReportCategory
         (Report.incident_period, IncidentPeriod.MANHA, "manha"),
         (Report.incident_period, IncidentPeriod.TARDE, "tarde"),
         (Report.incident_period, IncidentPeriod.NOITE, "noite"),
+        (ReportInteraction.kind, ReportInteractionKind.CONFIRMATION, "confirmation"),
+        (ReportInteraction.kind, ReportInteractionKind.ABUSE, "abuse"),
     ],
 )
 def test_enum_persistence_round_trip(
@@ -37,6 +45,8 @@ def test_enum_persistence_round_trip(
         (Report.category, "ASSEDIO"),
         (Report.incident_period, "MANHA"),
         (Report.incident_period, "desconhecido"),
+        (ReportInteraction.kind, "CONFIRMATION"),
+        (ReportInteraction.kind, "outro"),
     ],
 )
 def test_persistence_rejects_unknown_enum_values(

@@ -2,7 +2,7 @@
 
 import re
 from datetime import UTC, date, datetime, time
-from typing import Annotated
+from typing import Annotated, Literal
 
 from geoalchemy2.shape import to_shape
 from pydantic import (
@@ -17,7 +17,7 @@ from pydantic import (
 )
 
 from src.modules.reports.models import IncidentPeriod, Report, ReportCategory
-from src.modules.reports.service import CreateReportData
+from src.modules.reports.service import CreateReportData, ReportDetails
 
 
 class ReportLocation(BaseModel):
@@ -117,3 +117,52 @@ class ReportRead(ReportCreate):
 
 class ReportCreated(BaseModel):
     data: ReportRead
+
+
+class ReportDetailData(ReportRead):
+    confirmations_count: Annotated[int, Field(ge=0)]
+
+    @classmethod
+    def from_details(cls, details: ReportDetails) -> "ReportDetailData":
+        return cls(
+            id=details.id,
+            location=ReportLocation(
+                latitude=details.latitude,
+                longitude=details.longitude,
+                address_reference=details.address_reference,
+            ),
+            category=details.category,
+            description=details.description,
+            incident_date=details.incident_date,
+            incident_period=details.incident_period,
+            incident_time=details.incident_time,
+            is_anonymous=details.is_anonymous,
+            created_at=details.created_at,
+            confirmations_count=details.confirmations_count,
+        )
+
+
+class ReportDetailResponse(BaseModel):
+    data: ReportDetailData
+
+
+class EmptyInteraction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class ConfirmationData(BaseModel):
+    report_id: UUID4
+    confirmed: Literal[True] = True
+
+
+class ReportConfirmed(BaseModel):
+    data: ConfirmationData
+
+
+class AbuseData(BaseModel):
+    report_id: UUID4
+    abuse_registered: Literal[True] = True
+
+
+class ReportAbuseRegistered(BaseModel):
+    data: AbuseData

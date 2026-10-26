@@ -173,6 +173,14 @@ O serviço de criação também possui testes unitários em `tests/unit/test_rep
 
 Os testes em `tests/integration/test_report_endpoint.py` verificam o contrato HTTP sem banco, com serviço e identidade substituídos explicitamente. A suíte `test_report_creation.py` também cobre o endpoint com serviço e banco reais, substituindo apenas a identidade de teste. Tokens válidos sem essa substituição recebem `503 AUTHENTICATION_UNAVAILABLE` até existir consulta real da conta; tokens inválidos ou ausentes recebem `401`. A validação adicional das claims possui testes em `tests/unit/test_access_token_subject.py`.
 
+Para os testes da modelagem RF07, aplique também `0003_report_interactions`. As suítes de persistência e criação verificam o estado `is_hidden`, os tipos de interação e a unicidade por usuária/relato, inclusive em inserções simultâneas. As interações temporárias são revertidas ou removidas antes dos relatos que referenciam. Essa migração ainda não inclui chave estrangeira de usuária nem implementa os endpoints RF07.
+
+A consulta de detalhes pode ser exercitada pelo serviço `ReportService.get_details` ou por `GET /api/v1/reports/{id}`, sem autenticação. Os testes em `test_report_service.py` e `test_report_creation.py` cobrem seu retorno público, contagem histórica de confirmações e rejeição de relatos inexistentes/ocultados.
+
+As operações de serviço `confirm` e `report_abuse` possuem testes unitários em `tests/unit/test_report_interactions.py`. A suíte `test_report_creation.py` verifica também idempotência, conflitos, limiar de ocultação, concorrência entre sessões e reversão em falha de atualização. Nenhuma nova migração é necessária além de `0003_report_interactions` para esta etapa.
+
+As rotas `POST /api/v1/reports/{id}/confirm` e `POST /api/v1/reports/{id}/report-abuse` aceitam corpo `{}` e exigem autenticação. Enquanto a consulta real de conta estiver pendente, tokens válidos recebem `503 AUTHENTICATION_UNAVAILABLE`; não há modo de autenticação fictícia na aplicação. `test_report_endpoint.py` cobre os contratos HTTP RF07 e `test_report_creation.py` cobre também o fluxo HTTP com serviço/banco reais, substituindo somente a identidade de teste. A seção de comentários continua dependente de RF08.
+
 ---
 
 ## 8. O Que Ainda NÃO Está Implementado nesta Etapa
