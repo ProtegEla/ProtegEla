@@ -1,9 +1,29 @@
-"""
-Serviço de regras de negócio do módulo Auth.
+"""Validação de tokens de acesso; login e consulta de contas ainda pendentes."""
 
-Responsabilidades futuras (a serem implementadas pelo responsável do módulo):
-- Registro de usuário com validação de unicidade de e-mail (RF01) e senha forte (RN08).
-- Autenticação e validação de hash de senha (RF02).
-- Emissão e renovação de tokens JWT (Access e Refresh).
-- Fluxo de recuperação de senha via e-mail (RF16).
-"""
+import math
+from datetime import UTC, datetime
+from uuid import UUID
+
+from src.core.exceptions import UnauthorizedException
+from src.core.security import decode_token
+
+
+def validate_access_token_subject(token: str) -> UUID:
+    """Valida credenciais; não substitui a consulta da conta pelo UUID retornado."""
+    try:
+        claims = decode_token(token)
+        expires = claims.get("exp")
+        if (
+            claims.get("type") != "access"
+            or type(expires) not in (int, float)
+            or not math.isfinite(expires)
+            or expires <= datetime.now(UTC).timestamp()
+            or not isinstance(claims.get("sub"), str)
+        ):
+            raise UnauthorizedException()
+        subject = UUID(claims["sub"])
+        if subject.version != 4:
+            raise UnauthorizedException()
+        return subject
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise UnauthorizedException("Token inválido ou expirado.") from exc

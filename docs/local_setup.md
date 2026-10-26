@@ -67,9 +67,11 @@ CREATE EXTENSION IF NOT EXISTS postgis;
 ## 4. Migrações de Banco de Dados com Alembic
 
 > [!NOTE]
-> No estado atual da arquitetura, **ainda não existem tabelas ou modelos de dados mapeados**. Não execute migrações até que você ou seu colega criem modelos ORM em um módulo (ex: `models.py`).
+> O modelo `Report` e a migração `0001_create_reports` já estão definidos. O ambiente Alembic registra o modelo e exclui tabelas internas das extensões espaciais da comparação automática. A migração requer PostGIS habilitado previamente. Aplicação, comparação com o modelo (`alembic check`), reversão e reaplicação foram verificadas no banco local `protegela_test`, com PostgreSQL 16 e PostGIS 3.6.
 
-### Como executar quando existirem modelos válidos:
+> A tabela de relatos ainda não possui chave estrangeira para a autora: essa integração depende do modelo real de usuárias e da política de exclusão de conta. Isso não autoriza cadastrar relatos sem autenticação nem representa uma entrega funcional do RF09.
+
+### Como executar:
 1. Dentro de `backend/`, com o ambiente virtual ativado:
 2. **Gerar uma nova migração** automaticamente a partir das alterações nos modelos:
    ```bash
@@ -84,6 +86,10 @@ CREATE EXTENSION IF NOT EXISTS postgis;
    ```bash
    alembic downgrade -1
    ```
+
+Para verificar a migração de relatos em um **banco separado de testes**, configure `DATABASE_URL` e `DATABASE_SYNC_URL` em `backend/.env` para esse banco, com PostGIS habilitado. Execute `alembic upgrade head`, `alembic check`, `alembic downgrade base` e novamente `alembic upgrade head`. A reversão remove a tabela e seus relatos; use apenas dados descartáveis nessa verificação. Não gere uma segunda migração para criar a mesma tabela. Se outra migração for integrada antes desta, revise a cadeia de revisões antes de aplicá-la.
+
+Sem servidor disponível, `alembic upgrade head --sql` e `alembic downgrade 0001_create_reports:base --sql` permitem inspecionar o SQL gerado, mas não comprovam aplicação, reversão ou compatibilidade com o banco real.
 
 ---
 
@@ -161,10 +167,17 @@ pytest -v
 ```
 *(Executa a validação da política de senhas RN08 e verificação de saúde da API).*
 
+Também há testes unitários dos valores persistidos de categoria/período e testes de integração de relatos em `tests/integration/test_report_persistence.py`. Estes últimos exigem `TEST_DATABASE_SYNC_URL` apontando para um banco cujo nome termine em `_test`, com a migração aplicada e PostGIS ativo; sem essa variável, são explicitamente pulados. Cada teste reverte seus próprios dados. Eles verificam coordenadas/SRID, campos opcionais, autoria em publicação anônima e restrições de categoria, período e autoria.
+
+O serviço de criação também possui testes unitários em `tests/unit/test_report_service.py`. Os testes de integração em `tests/integration/test_report_creation.py` usam a mesma variável de banco de testes, exigem a migração `0002_report_device_id` e verificam criações simultâneas e expiração da janela RN06. Estes testes confirmam transações para verificar o limite entre sessões e removem ao final apenas os relatos dos dispositivos aleatórios que criaram.
+
+Os testes em `tests/integration/test_report_endpoint.py` verificam o contrato HTTP sem banco, com serviço e identidade substituídos explicitamente. A suíte `test_report_creation.py` também cobre o endpoint com serviço e banco reais, substituindo apenas a identidade de teste. Tokens válidos sem essa substituição recebem `503 AUTHENTICATION_UNAVAILABLE` até existir consulta real da conta; tokens inválidos ou ausentes recebem `401`. A validação adicional das claims possui testes em `tests/unit/test_access_token_subject.py`.
+
 ---
 
 ## 8. O Que Ainda NÃO Está Implementado nesta Etapa
 
 Para evitar falsas expectativas, registre claramente:
-- **Nenhuma regra de negócio concreta foi implementada**: não há login real funcionando, não há cadastro real de relatos no PostgreSQL, nem chamadas ativas para a Overpass API ou OpenRouteService.
+- **A entrega integrada do registro de relatos ainda depende de autenticação e usuárias**: modelo, migrações, serviço e rota de criação já existem, mas ainda não há consulta real da conta nem chave estrangeira da autora. O endpoint permanece protegido e indisponível para criação até essa integração.
+- Não há login real funcionando nem chamadas ativas para a Overpass API ou OpenRouteService.
 - **Os endpoints `/status` dos módulos são pontos de ancoragem da arquitetura**: cada integrante da equipe será responsável por implementar as rotas e regras de negócio reais do seu respectivo módulo.
