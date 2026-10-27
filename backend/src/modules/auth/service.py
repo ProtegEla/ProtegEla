@@ -7,3 +7,26 @@ Responsabilidades futuras (a serem implementadas pelo responsável do módulo):
 - Emissão e renovação de tokens JWT (Access e Refresh).
 - Fluxo de recuperação de senha via e-mail (RF16).
 """
+from src.core.exceptions import UnauthorizedException
+from src.core.security import (
+    verify_password,
+    create_access_token,
+    create_refresh_token,
+)
+
+
+def authenticate_credentials(
+    user_id: str,
+    password: str,
+    password_hash: str,
+
+) -> dict[str, str]:
+
+    if not verify_password(password, password_hash):
+        raise UnauthorizedException("credenciais inválidas")
+
+    return {
+        "access_token": create_access_token(user_id),
+        "refresh_token": create_refresh_token(user_id),
+        "token_type": "bearer",
+    }
