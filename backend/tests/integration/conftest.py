@@ -6,6 +6,7 @@ from sqlalchemy.pool import NullPool
 from src.core.database import Base, get_db_session
 from src.main import app
 import src.modules.users.models  
+import src.modules.auth.models
 
 TEST_DATABASE_URL = os.getenv(
     "TEST_DATABASE_URL",
