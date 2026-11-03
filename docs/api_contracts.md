@@ -22,14 +22,11 @@ Este documento estabelece as diretrizes de integração entre as aplicações cl
 ## 2. Autenticação e Identificação de Cliente
 
 ### 2.1. Usuárias Autenticadas (Login Real)
-
 - O fluxo de autenticação retorna um par de tokens JWT:
   - **Access Token**: Curta duração (60 minutos), enviado via cabeçalho:
-
     ```http
     Authorization: Bearer <jwt_access_token>
     ```
-
   - **Refresh Token**: Longa duração (7 dias), utilizado exclusivamente no endpoint `/api/v1/auth/refresh`.
 
 #### Endpoint de Login — RF02
@@ -88,15 +85,12 @@ O rate limiting do login utiliza o IP identificado pelo servidor. O controle ind
 Em ambientes com proxy reverso, a identificação correta do IP de origem depende da configuração de proxies confiáveis.
 
 ### 2.2. Acesso Sem Login (RF04)
-
 - Para usuárias que optam por usar o mapa, rotas e pânico sem autenticação:
   - O aplicativo gera um identificador local pseudo-anônimo (UUID) persistido no cliente.
   - O cliente envia esse identificador no cabeçalho customizado:
-
     ```http
     X-Device-Id: 550e8400-e29b-41d4-a716-446655440000
     ```
-
   - Esse identificador é utilizado pelo servidor para aplicar rate limits de proteção e associar denúncias comunitárias temporárias contra spam (RN06).
 
 ---
@@ -104,9 +98,7 @@ Em ambientes com proxy reverso, a identificação correta do IP de origem depend
 ## 3. Envelope Padronizado de Respostas e Erros
 
 ### 3.1. Resposta de Sucesso
-
 Para coleções com paginação ou consultas regulares:
-
 ```json
 {
   "data": { ... },
@@ -119,9 +111,7 @@ Para coleções com paginação ou consultas regulares:
 ```
 
 ### 3.2. Resposta Padronizada de Erro (RFC 7807 Inspirado)
-
 Toda falha (códigos HTTP 4xx e 5xx) deve obrigatoriamente retornar uma estrutura previsível:
-
 ```json
 {
   "error": {
@@ -140,11 +130,11 @@ Toda falha (códigos HTTP 4xx e 5xx) deve obrigatoriamente retornar uma estrutur
 ```
 
 #### Códigos de Erro Padronizados Previstos
-
 - `VALIDATION_ERROR` (422)
 - `UNAUTHORIZED` (401)
 - `FORBIDDEN` (403)
 - `NOT_FOUND` (404)
+- `EMAIL_ALREADY_REGISTERED` (409)
 - `RATE_LIMIT_EXCEEDED` (429)
 - `EXTERNAL_SERVICE_UNAVAILABLE` (503)
 - `INTERNAL_SERVER_ERROR` (500)
@@ -156,7 +146,6 @@ Toda falha (códigos HTTP 4xx e 5xx) deve obrigatoriamente retornar uma estrutur
 1. **Timeouts da API FastAPI**:
    - Chamadas HTTP do cliente para a API têm timeout padrão recomendado de **8 segundos**.
    - O aplicativo deve exibir estado amigável de carregamento e retry com backoff exponencial se houver erro transitório.
-
 2. **Timeouts com Serviços Externos**:
    - Overpass API: Timeout estrito de **10 segundos**. Caso falhe, retorna estabelecimentos em cache prévio no banco de dados.
    - OpenRouteService: Timeout estrito de **8 segundos**. Em caso de falha, o cliente é avisado e pode receber rota offline básica em cache com aviso visual de alerta.
@@ -183,7 +172,55 @@ Toda falha (códigos HTTP 4xx e 5xx) deve obrigatoriamente retornar uma estrutur
 | **risk_zones** | `GET` | `/api/v1/risk-zones` | Zonas de risco poligonais agregadas (RN03) | Proposta em discussão |
 | **routes** | `POST` | `/api/v1/routes/calculate` | Cálculo de rota segura desviando de áreas de risco (RF15) | Proposta em discussão |
 | **emergency** | `POST` | `/api/v1/emergency/panic` | Registro de acionamento do botão de pânico (RF14) | Proposta em discussão |
-| **emergency** | `GET` | `/api/v1/emergency/useful-numbers` | Lista de telefones de utilidade pública (RF10) | Proposta em discussão |
-| **support_locations** | `GET` | `/api/v1/support-locations/nearby` | Delegacias e hospitais próximos via OSM/Overpass (RF12) | Proposta em discussão |
+| **emergency** | `GET` | `/api/v1/emergency/useful-numbers`| Lista de telefones de utilidade pública (RF10) | Proposta em discussão |
+| **support_locations**| `GET` | `/api/v1/support-locations/nearby` | Delegacias e hospitais próximos via OSM/Overpass (RF12) | Proposta em discussão |
 | **notifications** | `POST` | `/api/v1/notifications/proximity-alert` | Verificação de entrada em zona de risco (RF13) | Proposta em discussão |
 | **core** | `GET` | `/api/v1/health` | Healthcheck de integridade do backend e banco | Aprovado |
+
+
+---
+
+## 6. Contratos Detalhados
+
+### 6.1. `POST /api/v1/auth/register` — Cadastro de Usuária
+
+**Requisição:**
+```json
+{
+  "username": "maria",
+  "email": "maria@email.com",
+  "password": "Senha@123",
+  "emergency_contacts": [
+    { "name": "Mãe", "phone": "(11) 98765-4321", "is_primary": true },
+    { "name": "Irmã", "phone": "11912345678", "is_primary": false }
+  ]
+}
+```
+
+| Campo | Regras |
+| :--- | :--- |
+| `username` | Obrigatório, 3 a 50 caracteres. |
+| `email` | Obrigatório, formato `algo@dominio.ext`, máx. 254 caracteres. Normalizado para minúsculas. Deve ser único. |
+| `password` | Obrigatório, máx. 128 caracteres. Deve atender à RN08 (mín. 8 caracteres, maiúscula, minúscula, número e símbolo). |
+| `emergency_contacts` | Obrigatório, de 1 a 3 contatos, com **exatamente 1** `is_primary: true` (1 principal e até 2 secundários). |
+| `emergency_contacts[].name` | Obrigatório, 1 a 100 caracteres. |
+| `emergency_contacts[].phone` | Obrigatório, DDD + número (10 a 15 dígitos, `+` opcional). Espaços, parênteses e hífens são removidos. |
+| `emergency_contacts[].is_primary` | Opcional, padrão `false`. |
+
+**Resposta de sucesso — `201 Created`:**
+```json
+{
+  "id": "3f1c2a9e-7b4d-4e2a-9c1f-8a6b5d4e3c2b",
+  "username": "maria",
+  "email": "maria@email.com"
+}
+```
+
+**Erros possíveis:**
+| Status | `code` | Quando |
+| :--- | :--- | :--- |
+| 409 | `EMAIL_ALREADY_REGISTERED` | E-mail já cadastrado (comparação sem diferenciar maiúsculas/minúsculas). |
+| 422 | `VALIDATION_ERROR` | Campo ausente ou fora das regras acima (detalhes em `details[].field`). |
+| 422 | `PASSWORD_TOO_SHORT`, `PASSWORD_MISSING_UPPERCASE`, `PASSWORD_MISSING_LOWERCASE`, `PASSWORD_MISSING_DIGIT`, `PASSWORD_MISSING_SPECIAL_CHAR` | Senha não atende à RN08. |
+
+**Armazenamento (LGPD):** o e-mail e os telefones dos contatos são cifrados em repouso (Fernet); a unicidade do e-mail é verificada por HMAC-SHA256 (`email_lookup`); a senha é armazenada apenas como hash Argon2id.
