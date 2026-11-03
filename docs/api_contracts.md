@@ -116,7 +116,31 @@ Toda falha (códigos HTTP 4xx e 5xx) deve obrigatoriamente retornar uma estrutur
 | **risk_zones** | `GET` | `/api/v1/risk-zones` | Zonas de risco poligonais agregadas (RN03) | Proposta em discussão |
 | **routes** | `POST` | `/api/v1/routes/calculate` | Cálculo de rota segura desviando de áreas de risco (RF15) | Proposta em discussão |
 | **emergency** | `POST` | `/api/v1/emergency/panic` | Registro de acionamento do botão de pânico (RF14) | Proposta em discussão |
-| **emergency** | `GET` | `/api/v1/emergency/useful-numbers`| Lista de telefones de utilidade pública (RF10) | Proposta em discussão |
+| **emergency** | `GET` | `/api/v1/emergency/useful-numbers` | Lista de telefones de utilidade pública (RF10) | Implementado (números públicos) |
 | **support_locations**| `GET` | `/api/v1/support-locations/nearby` | Delegacias e hospitais próximos via OSM/Overpass (RF12) | Proposta em discussão |
 | **notifications** | `POST` | `/api/v1/notifications/proximity-alert` | Verificação de entrada em zona de risco (RF13) | Proposta em discussão |
 | **core** | `GET` | `/api/v1/health` | Healthcheck de integridade do backend e banco | Aprovado |
+
+### 5.1. Telefones úteis (RF10)
+
+**GET `/api/v1/emergency/useful-numbers`**
+
+Retorna uma lista de telefones públicos úteis para segurança e emergência, sem necessidade de autenticação.
+
+**Resposta (200 OK):**
+
+```json
+{
+  "data": [
+    {
+      "name": "Central de Atendimento à Mulher",
+      "phone": "180",
+      "description": "Orientação e denúncias de violência contra a mulher."
+    }
+  ]
+}
+```
+
+O exemplo apresenta apenas um item. A lista completa contém os números 180, 190, 192, 193 e 100.
+
+Os contatos pessoais cadastrados pela usuária não estão incluídos nesta implementação.
