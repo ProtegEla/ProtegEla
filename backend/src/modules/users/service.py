@@ -1,8 +1,15 @@
-"""
-Serviço de regras de negócio do módulo Users.
+"""Consultas de conta usadas pela autenticação."""
 
-Responsabilidades futuras (a serem implementadas pelo responsável do módulo):
-- Gestão de perfil e preferências (RF17).
-- Cadastro de até 3 contatos de emergência com criptografia em repouso (RF01, RNF06).
-- Exclusão definitiva de conta em conformidade com a LGPD.
-"""
+from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.core.exceptions import UnauthorizedException
+from src.modules.users.models import User
+
+
+async def require_user(session: AsyncSession, user_id: UUID) -> None:
+    """Rejeita identidades sem conta cadastrada."""
+    if await session.scalar(select(User.id).where(User.id == user_id)) is None:
+        raise UnauthorizedException()
