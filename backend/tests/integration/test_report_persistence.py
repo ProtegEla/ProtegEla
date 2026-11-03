@@ -9,6 +9,7 @@ from datetime import date
 from uuid import uuid4
 
 import pytest
+from conftest import new_user
 from geoalchemy2.shape import from_shape, to_shape
 from shapely.geometry import Point
 from sqlalchemy import create_engine, func, select, text
@@ -46,9 +47,12 @@ def report_session() -> Iterator[Session]:
         engine.dispose()
 
 
-def new_report() -> Report:
+def new_report(session: Session) -> Report:
+    author = new_user()
+    session.add(author)
+    session.flush()
     return Report(
-        author_id=uuid4(),
+        author_id=author.id,
         category=ReportCategory.MA_ILUMINACAO,
         location=from_shape(Point(-46.633308, -23.55052), srid=4326),
         incident_date=date(2026, 10, 25),
@@ -60,7 +64,7 @@ def new_report() -> Report:
 def test_anonymous_incident_preserves_author_and_location(
     report_session: Session,
 ) -> None:
-    report = new_report()
+    report = new_report(report_session)
     author_id = report.author_id
     report_session.add(report)
     report_session.flush()
@@ -102,7 +106,7 @@ def test_anonymous_incident_preserves_author_and_location(
 def test_database_rejects_invalid_categories_and_periods(
     report_session: Session, statement: str, constraint: str
 ) -> None:
-    report = new_report()
+    report = new_report(report_session)
     report_session.add(report)
     report_session.flush()
 
@@ -112,7 +116,7 @@ def test_database_rejects_invalid_categories_and_periods(
 
 
 def test_anonymity_does_not_allow_missing_author(report_session: Session) -> None:
-    report = new_report()
+    report = new_report(report_session)
     report_session.add(report)
     report_session.flush()
 
@@ -128,10 +132,13 @@ def test_anonymity_does_not_allow_missing_author(report_session: Session) -> Non
 def test_interaction_round_trip(
     report_session: Session, kind: ReportInteractionKind
 ) -> None:
-    report = new_report()
+    report = new_report(report_session)
     report_session.add(report)
     report_session.flush()
-    user_id = uuid4()
+    user = new_user()
+    report_session.add(user)
+    report_session.flush()
+    user_id = user.id
     interaction = ReportInteraction(report_id=report.id, user_id=user_id, kind=kind)
     report_session.add(interaction)
     report_session.flush()
@@ -154,10 +161,13 @@ def test_database_prevents_duplicate_and_opposite_interactions(
     first: ReportInteractionKind,
     second: ReportInteractionKind,
 ) -> None:
-    report = new_report()
+    report = new_report(report_session)
     report_session.add(report)
     report_session.flush()
-    user_id = uuid4()
+    user = new_user()
+    report_session.add(user)
+    report_session.flush()
+    user_id = user.id
     report_session.add(
         ReportInteraction(report_id=report.id, user_id=user_id, kind=first)
     )
@@ -180,10 +190,16 @@ def test_database_prevents_duplicate_and_opposite_interactions(
 
 
 def test_same_user_can_interact_with_different_reports(report_session: Session) -> None:
-    first_report, second_report = new_report(), new_report()
+    first_report, second_report = new_report(report_session), new_report(report_session)
     report_session.add_all([first_report, second_report])
     report_session.flush()
-    user_id = uuid4()
+    user = new_user()
+    report_session.add(user)
+    report_session.flush()
+    user_id = user.id
+    extra_user = new_user()
+    report_session.add(extra_user)
+    report_session.flush()
     report_session.add_all(
         [
             ReportInteraction(
@@ -198,7 +214,7 @@ def test_same_user_can_interact_with_different_reports(report_session: Session) 
             ),
             ReportInteraction(
                 report_id=first_report.id,
-                user_id=uuid4(),
+                user_id=extra_user.id,
                 kind=ReportInteractionKind.CONFIRMATION,
             ),
         ]
@@ -226,11 +242,14 @@ def test_interaction_requires_existing_report(report_session: Session) -> None:
 
 
 def test_database_rejects_unknown_interaction_kind(report_session: Session) -> None:
-    report = new_report()
+    report = new_report(report_session)
     report_session.add(report)
     report_session.flush()
+    user = new_user()
+    report_session.add(user)
+    report_session.flush()
     interaction = ReportInteraction(
-        report_id=report.id, user_id=uuid4(), kind=ReportInteractionKind.CONFIRMATION
+        report_id=report.id, user_id=user.id, kind=ReportInteractionKind.CONFIRMATION
     )
     report_session.add(interaction)
     report_session.flush()
@@ -243,7 +262,7 @@ def test_database_rejects_unknown_interaction_kind(report_session: Session) -> N
 
 
 def test_hidden_state_is_persisted_and_cannot_be_null(report_session: Session) -> None:
-    report = new_report()
+    report = new_report(report_session)
     report_session.add(report)
     report_session.flush()
     assert report.is_hidden is False
@@ -257,3 +276,28 @@ def test_hidden_state_is_persisted_and_cannot_be_null(report_session: Session) -
             {"id": report.id},
         )
     assert error.value.orig.diag.column_name == "is_hidden"
+
+
+def test_report_requires_existing_author(report_session: Session) -> None:
+    report = new_report(report_session)
+    report.author_id = uuid4()
+    with pytest.raises(IntegrityError) as error, report_session.begin_nested():
+        report_session.add(report)
+        report_session.flush()
+    assert error.value.orig.diag.constraint_name == "fk_reports_author_id"
+
+
+def test_interaction_requires_existing_user(report_session: Session) -> None:
+    report = new_report(report_session)
+    report_session.add(report)
+    report_session.flush()
+    with pytest.raises(IntegrityError) as error, report_session.begin_nested():
+        report_session.add(
+            ReportInteraction(
+                report_id=report.id,
+                user_id=uuid4(),
+                kind=ReportInteractionKind.CONFIRMATION,
+            )
+        )
+        report_session.flush()
+    assert error.value.orig.diag.constraint_name == "fk_report_interactions_user_id"

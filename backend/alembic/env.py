@@ -13,6 +13,9 @@ from src.core.config import settings
 from src.core.database import Base
 from src.modules.reports.models import Report  # noqa: F401 -- registra em Base.metadata
 
+from src.modules.users.models import User, EmergencyContact
+from src.modules.auth.models import LoginAttempt
+
 config = context.config
 
 if config.config_file_name is not None:

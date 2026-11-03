@@ -11,6 +11,7 @@ from src.core.exceptions import (
     AppException,
     EntityNotFoundException,
     ForbiddenException,
+    UnauthorizedException,
 )
 from src.core.security import create_access_token, create_refresh_token
 from src.main import app
@@ -226,9 +227,13 @@ async def test_unauthorized_requests_never_create_reports(
 
 
 @pytest.mark.anyio
-async def test_valid_token_still_requires_account_lookup(
-    async_client: AsyncClient, payload: dict, route_service: AsyncMock
+async def test_valid_token_requires_existing_account(
+    async_client: AsyncClient, payload: dict, route_service: AsyncMock, monkeypatch
 ) -> None:
+    monkeypatch.setattr(
+        "src.modules.auth.dependencies.require_user",
+        AsyncMock(side_effect=UnauthorizedException()),
+    )
     response = await async_client.post(
         "/api/v1/reports",
         json=payload,
@@ -237,8 +242,8 @@ async def test_valid_token_still_requires_account_lookup(
             "Authorization": "Bearer " + create_access_token(str(uuid4())),
         },
     )
-    assert response.status_code == 503
-    assert response.json()["error"]["code"] == "AUTHENTICATION_UNAVAILABLE"
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "UNAUTHORIZED"
     route_service.create.assert_not_awaited()
 
 
@@ -377,16 +382,20 @@ async def test_interactions_reject_unauthorized_requests(
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("suffix", ["confirm", "report-abuse"])
-async def test_interactions_remain_closed_until_account_lookup_exists(
-    async_client: AsyncClient, route_service: AsyncMock, suffix: str
+async def test_interactions_require_existing_account(
+    async_client: AsyncClient, route_service: AsyncMock, suffix: str, monkeypatch
 ) -> None:
+    monkeypatch.setattr(
+        "src.modules.auth.dependencies.require_user",
+        AsyncMock(side_effect=UnauthorizedException()),
+    )
     response = await async_client.post(
         f"/api/v1/reports/{uuid4()}/{suffix}",
         json={},
         headers={"Authorization": "Bearer " + create_access_token(str(uuid4()))},
     )
-    assert response.status_code == 503
-    assert response.json()["error"]["code"] == "AUTHENTICATION_UNAVAILABLE"
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "UNAUTHORIZED"
     route_service.confirm.assert_not_awaited()
     route_service.report_abuse.assert_not_awaited()
 

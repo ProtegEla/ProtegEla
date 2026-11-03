@@ -29,6 +29,61 @@ Este documento estabelece as diretrizes de integração entre as aplicações cl
     ```
   - **Refresh Token**: Longa duração (7 dias), utilizado exclusivamente no endpoint `/api/v1/auth/refresh`.
 
+#### Endpoint de Login — RF02
+
+**Rota:** `POST /api/v1/auth/login`
+
+**Descrição:** Autentica uma usuária cadastrada utilizando e-mail e senha.
+
+**Requisição:**
+
+```json
+{
+  "email": "maria@email.com",
+  "password": "Senha@123"
+}
+```
+
+**Resposta de sucesso — HTTP 200:**
+
+```json
+{
+  "access_token": "<jwt_access_token>",
+  "refresh_token": "<jwt_refresh_token>",
+  "token_type": "bearer"
+}
+```
+
+O `access_token` deve ser utilizado para acessar rotas protegidas. O `refresh_token` é destinado à renovação da autenticação, por meio de um endpoint de refresh ainda não implementado.
+
+**Credenciais inválidas — HTTP 401:**
+
+Quando o e-mail não está cadastrado ou a senha está incorreta, o servidor retorna o erro padronizado:
+
+- Código: `UNAUTHORIZED`
+- Mensagem: `credenciais inválidas`
+
+A mesma mensagem é utilizada nos dois casos para não revelar se um e-mail está cadastrado.
+
+**Limite de tentativas — HTTP 429:**
+
+O servidor permite até cinco tentativas inválidas consecutivas por IP em uma janela de dez minutos. Após a quinta falha, o cliente fica temporariamente bloqueado por dez minutos. Tentativas adicionais durante o bloqueio retornam:
+
+- Código: `RATE_LIMIT_EXCEEDED`
+- Mensagem: `Muitas tentativas de login. Tente novamente mais tarde.`
+
+Uma autenticação bem-sucedida reinicia o contador de tentativas inválidas.
+
+**Segurança:**
+
+As senhas são verificadas utilizando o mecanismo de hash configurado no backend. O controle de tentativas é persistido no PostgreSQL, utilizando um identificador derivado do IP por HMAC, sem armazenar diretamente o endereço IP nessa tabela.
+
+**Limitações atuais:**
+
+O rate limiting do login utiliza o IP identificado pelo servidor. O controle individual por `X-Device-Id` não está implementado neste endpoint.
+
+Em ambientes com proxy reverso, a identificação correta do IP de origem depende da configuração de proxies confiáveis.
+
 ### 2.2. Acesso Sem Login (RF04)
 - Para usuárias que optam por usar o mapa, rotas e pânico sem autenticação:
   - O aplicativo gera um identificador local pseudo-anônimo (UUID) persistido no cliente.
@@ -79,6 +134,7 @@ Toda falha (códigos HTTP 4xx e 5xx) deve obrigatoriamente retornar uma estrutur
 - `UNAUTHORIZED` (401)
 - `FORBIDDEN` (403)
 - `NOT_FOUND` (404)
+- `EMAIL_ALREADY_REGISTERED` (409)
 - `RATE_LIMIT_EXCEEDED` (429)
 - `EXTERNAL_SERVICE_UNAVAILABLE` (503)
 - `INTERNAL_SERVER_ERROR` (500)
@@ -101,7 +157,7 @@ Toda falha (códigos HTTP 4xx e 5xx) deve obrigatoriamente retornar uma estrutur
 | Módulo | Método | Rota | Descrição | Status |
 | :--- | :--- | :--- | :--- | :--- |
 | **auth** | `POST` | `/api/v1/auth/register` | Cadastro de usuária e contatos de emergência (RF01) | Proposta em discussão |
-| **auth** | `POST` | `/api/v1/auth/login` | Autenticação e emissão de tokens (RF02) | Proposta em discussão |
+| **auth** | `POST` | `/api/v1/auth/login` | Autenticação, emissão de tokens e limite de tentativas (RF02/RN06) | Implementado no backend; pendente de validação da equipe |
 | **auth** | `POST` | `/api/v1/auth/refresh` | Renovação de Access Token | Proposta em discussão |
 | **auth** | `POST` | `/api/v1/auth/forgot-password` | Solicitação de recuperação de senha (RF16) | Proposta em discussão |
 | **users** | `GET` | `/api/v1/users/me` | Dados do perfil da usuária logada | Proposta em discussão |
@@ -109,9 +165,9 @@ Toda falha (códigos HTTP 4xx e 5xx) deve obrigatoriamente retornar uma estrutur
 | **users** | `DELETE` | `/api/v1/users/me` | Exclusão definitiva de conta e dados (LGPD) | Proposta em discussão |
 | **reports** | `GET` | `/api/v1/reports` | Listagem de incidentes com filtro por bounding box | Proposta em discussão |
 | **reports** | `GET` | `/api/v1/reports/{id}` | Detalhes públicos de um relato visível (RF07) | Implementado |
-| **reports** | `POST` | `/api/v1/reports` | Registro de incidente (RF09) | Rota implementada; consulta de conta pendente |
-| **reports** | `POST` | `/api/v1/reports/{id}/confirm` | Confirmação da veracidade do relato (RN01) | Rota implementada; consulta de conta pendente |
-| **reports** | `POST` | `/api/v1/reports/{id}/report-abuse` | Denúncia de relato falso/impróprio (RN06) | Rota implementada; consulta de conta pendente |
+| **reports** | `POST` | `/api/v1/reports` | Registro de incidente (RF09) | Implementado com consulta de conta |
+| **reports** | `POST` | `/api/v1/reports/{id}/confirm` | Confirmação da veracidade do relato (RN01) | Implementado com consulta de conta |
+| **reports** | `POST` | `/api/v1/reports/{id}/report-abuse` | Denúncia de relato falso/impróprio (RN06) | Implementado com consulta de conta |
 | **comments** | `GET` | `/api/v1/reports/{id}/comments` | Consulta de comentários e respostas (RF08) | Proposta em discussão |
 | **comments** | `POST` | `/api/v1/reports/{id}/comments` | Inserção de comentário | Proposta em discussão |
 | **risk_zones** | `GET` | `/api/v1/risk-zones` | Zonas de risco poligonais agregadas (RN03) | Proposta em discussão |
@@ -123,6 +179,16 @@ Toda falha (códigos HTTP 4xx e 5xx) deve obrigatoriamente retornar uma estrutur
 | **core** | `GET` | `/api/v1/health` | Healthcheck de integridade do backend e banco | Aprovado |
 
 ---
+
+## Integração de Cadastro, Login e Relatos
+
+- `POST /auth/login` emite tokens de acesso e renovação; cinco falhas por IP bloqueiam novas tentativas por dez minutos. O IP é representado por HMAC no banco.
+- As mutações de relatos validam o token de acesso e consultam `users.id`; conta inexistente retorna `401 UNAUTHORIZED`. O bloqueio provisório `503 AUTHENTICATION_UNAVAILABLE` foi removido.
+- Autoria e interações referenciam `users.id`, sem exclusão em cascata. A exclusão completa de conta depende de implementação própria.
+- Alembic une os históricos em `0004_merge_auth_reports`; `0005_report_user_foreign_keys` adiciona as referências e rejeita dados órfãos sem apagá-los.
+- Detalhes públicos continuam sem autenticação e sem identificação da autora. Comentários permanecem pendentes.
+
+As seções abaixo preservam o histórico das entregas; menções à integração de usuárias pendente descrevem o estado anterior a esta integração.
 
 ## 6. Registro de Relato — RF09
 
@@ -530,3 +596,52 @@ A separação permanece: modelos SQLAlchemy representam persistência; o serviç
 - Tratar a exposição de parâmetros SQL em logs do núcleo compartilhado, já registrada na seção 6.10, antes de usar dados reais com log SQL de depuração ativo. Os testes foram executados com `DEBUG=false`.
 
 A consulta de zonas agrupadas e o fluxo administrativo de revisão/restauração permanecem integrações futuras, conforme o escopo aprovado. A instalação de dependências continua sujeita à limitação de reprodutibilidade com SQLAlchemy 2.1 documentada na seção 6.10; a validação desta revisão usou SQLAlchemy 2.0, sem mudar a faixa declarada.
+
+
+
+---
+
+## 8. Cadastro
+
+### 8.1. `POST /api/v1/auth/register` — Cadastro de Usuária
+
+**Requisição:**
+```json
+{
+  "username": "maria",
+  "email": "maria@email.com",
+  "password": "Senha@123",
+  "emergency_contacts": [
+    { "name": "Mãe", "phone": "(11) 98765-4321", "is_primary": true },
+    { "name": "Irmã", "phone": "11912345678", "is_primary": false }
+  ]
+}
+```
+
+| Campo | Regras |
+| :--- | :--- |
+| `username` | Obrigatório, 3 a 50 caracteres. |
+| `email` | Obrigatório, formato `algo@dominio.ext`, máx. 254 caracteres. Normalizado para minúsculas. Deve ser único. |
+| `password` | Obrigatório, máx. 128 caracteres. Deve atender à RN08 (mín. 8 caracteres, maiúscula, minúscula, número e símbolo). |
+| `emergency_contacts` | Obrigatório, de 1 a 3 contatos, com **exatamente 1** `is_primary: true` (1 principal e até 2 secundários). |
+| `emergency_contacts[].name` | Obrigatório, 1 a 100 caracteres. |
+| `emergency_contacts[].phone` | Obrigatório, DDD + número (10 a 15 dígitos, `+` opcional). Espaços, parênteses e hífens são removidos. |
+| `emergency_contacts[].is_primary` | Opcional, padrão `false`. |
+
+**Resposta de sucesso — `201 Created`:**
+```json
+{
+  "id": "3f1c2a9e-7b4d-4e2a-9c1f-8a6b5d4e3c2b",
+  "username": "maria",
+  "email": "maria@email.com"
+}
+```
+
+**Erros possíveis:**
+| Status | `code` | Quando |
+| :--- | :--- | :--- |
+| 409 | `EMAIL_ALREADY_REGISTERED` | E-mail já cadastrado (comparação sem diferenciar maiúsculas/minúsculas). |
+| 422 | `VALIDATION_ERROR` | Campo ausente ou fora das regras acima (detalhes em `details[].field`). |
+| 422 | `PASSWORD_TOO_SHORT`, `PASSWORD_MISSING_UPPERCASE`, `PASSWORD_MISSING_LOWERCASE`, `PASSWORD_MISSING_DIGIT`, `PASSWORD_MISSING_SPECIAL_CHAR` | Senha não atende à RN08. |
+
+**Armazenamento (LGPD):** o e-mail e os telefones dos contatos são cifrados em repouso (Fernet); a unicidade do e-mail é verificada por HMAC-SHA256 (`email_lookup`); a senha é armazenada apenas como hash Argon2id.

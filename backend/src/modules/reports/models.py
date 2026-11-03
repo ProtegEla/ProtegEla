@@ -1,7 +1,7 @@
 """Persistência dos incidentes e interações comunitárias (RF07/RF09).
 
-A autoria é obrigatória mesmo quando a publicação é anônima. A chave
-estrangeira depende do modelo real de usuárias e de sua política de exclusão.
+A autoria é obrigatória mesmo quando a publicação é anônima. As referências
+a usuárias impedem exclusão enquanto houver relatos ou interações.
 A mesma identidade não pode confirmar e denunciar o mesmo relato.
 Zonas de risco permanecem sob responsabilidade de outro módulo.
 """
@@ -56,8 +56,12 @@ class Report(Base):
     __table_args__ = (Index("ix_reports_device_created", "device_id", "created_at"),)
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    # Não associar a uma tabela fictícia enquanto Users não estiver implementado.
-    author_id: Mapped[UUID] = mapped_column(Uuid, nullable=False, index=True)
+    author_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("users.id", name="fk_reports_author_id"),
+        nullable=False,
+        index=True,
+    )
     # Controle de abuso (RN06); null apenas para registros anteriores à migração.
     device_id: Mapped[UUID | None] = mapped_column(Uuid)
     category: Mapped[ReportCategory] = mapped_column(
@@ -104,8 +108,7 @@ class Report(Base):
 class ReportInteraction(Base):
     """Uma confirmação ou denúncia por usuária/relato, nunca ambas.
 
-    A chave estrangeira de user_id aguarda o modelo real de usuárias. A ligação
-    com o relato já é verificada pelo banco, sem exclusão em cascata implícita.
+    As referências de relato e usuária são verificadas sem exclusão em cascata.
     """
 
     __tablename__ = "report_interactions"
@@ -122,7 +125,11 @@ class ReportInteraction(Base):
         ForeignKey("reports.id", name="fk_report_interactions_report_id"),
         nullable=False,
     )
-    user_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("users.id", name="fk_report_interactions_user_id"),
+        nullable=False,
+    )
     kind: Mapped[ReportInteractionKind] = mapped_column(
         SQLAlchemyEnum(
             ReportInteractionKind,

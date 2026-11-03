@@ -2,12 +2,14 @@
 
 import asyncio
 import os
+import sys
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 from uuid import UUID, uuid4
 
 import pytest
+from conftest import new_user
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import delete, event, func, select, update
 from sqlalchemy.engine import Connection, make_url
@@ -25,10 +27,11 @@ from src.modules.reports.models import (
     ReportInteractionKind,
 )
 from src.modules.reports.service import CreateReportData, ReportService
+from src.modules.users.models import User
 
 
 @pytest.fixture
-async def service_database() -> AsyncIterator[tuple[AsyncEngine, UUID]]:
+async def service_database(monkeypatch) -> AsyncIterator[tuple[AsyncEngine, UUID]]:
     database_url = os.environ.get("TEST_DATABASE_SYNC_URL")
     if not database_url:
         pytest.skip("Defina TEST_DATABASE_SYNC_URL para testar PostgreSQL/PostGIS")
@@ -37,6 +40,15 @@ async def service_database() -> AsyncIterator[tuple[AsyncEngine, UUID]]:
         pytest.fail("Os testes exigem um banco terminado em _test")
     engine = create_async_engine(url.set(drivername="postgresql+asyncpg"))
     device_id = uuid4()
+    created_users = set()
+    original_create_user = create_user
+
+    async def tracked_create_user(engine, user_id=None):
+        result = await original_create_user(engine, user_id)
+        created_users.add(result)
+        return result
+
+    monkeypatch.setattr(sys.modules[__name__], "create_user", tracked_create_user)
     try:
         yield engine, device_id
     finally:
@@ -52,8 +64,29 @@ async def service_database() -> AsyncIterator[tuple[AsyncEngine, UUID]]:
                 await connection.execute(
                     delete(Report).where(Report.device_id == device_id)
                 )
+                await connection.execute(delete(User).where(User.id.in_(created_users)))
         finally:
             await engine.dispose()
+
+
+async def create_user(engine: AsyncEngine, user_id: UUID | None = None) -> UUID:
+    user = new_user(user_id)
+    async with AsyncSession(engine) as session:
+        from sqlalchemy.dialects.postgresql import insert
+
+        await session.execute(
+            insert(User)
+            .values(
+                id=user.id,
+                username=user.username,
+                email_encrypted=user.email_encrypted,
+                email_lookup=user.email_lookup,
+                password_hash=user.password_hash,
+            )
+            .on_conflict_do_nothing(index_elements=[User.id])
+        )
+        await session.commit()
+    return user.id
 
 
 def incident_data() -> CreateReportData:
@@ -71,7 +104,7 @@ def incident_data() -> CreateReportData:
 async def create_incident(engine: AsyncEngine, device_id: UUID) -> Report:
     async with AsyncSession(engine, expire_on_commit=False) as session:
         return await ReportService(session, today=lambda: date(2026, 10, 26)).create(
-            incident_data(), author_id=uuid4(), device_id=device_id
+            incident_data(), author_id=await create_user(engine), device_id=device_id
         )
 
 
@@ -118,7 +151,7 @@ async def test_rf07_http_flow_with_real_service_and_database(
                 assert forbidden.status_code == 403
                 assert forbidden.json()["error"]["code"] == "FORBIDDEN"
 
-            current_user = uuid4()
+            current_user = await create_user(engine)
             first = await client.post(f"{url}/confirm", json={})
             repeated = await client.post(f"{url}/confirm", json={})
             assert first.status_code == repeated.status_code == 200
@@ -131,13 +164,13 @@ async def test_rf07_http_flow_with_real_service_and_database(
             assert conflict.status_code == 409
             assert conflict.json()["error"]["code"] == "INTERACTION_CONFLICT"
 
-            current_user = uuid4()
+            current_user = await create_user(engine)
             second = await client.post(f"{url}/confirm", json={})
             assert second.status_code == 200
             details = await client.get(url)
             assert details.json()["data"]["confirmations_count"] == 2
 
-            current_user = uuid4()
+            current_user = await create_user(engine)
             abuse = await client.post(f"{url}/report-abuse", json={})
             assert abuse.status_code == 200
             assert abuse.json() == {
@@ -183,7 +216,11 @@ async def seed_interactions(
         ):
             session.add_all(
                 [
-                    ReportInteraction(report_id=report_id, user_id=uuid4(), kind=kind)
+                    ReportInteraction(
+                        report_id=report_id,
+                        user_id=await create_user(engine),
+                        kind=kind,
+                    )
                     for _ in range(count)
                 ]
             )
@@ -193,6 +230,7 @@ async def seed_interactions(
 async def register_interaction(
     engine: AsyncEngine, report_id: UUID, user_id: UUID, kind: ReportInteractionKind
 ) -> None:
+    await create_user(engine, user_id)
     async with AsyncSession(engine, expire_on_commit=False) as session:
         service = ReportService(session)
         operation = (
@@ -211,7 +249,7 @@ async def test_repeated_interaction_keeps_original_id_and_timestamp(
     engine, device_id = service_database
     report = await create_incident(engine, device_id)
     await seed_interactions(engine, report.id, 10)
-    user_id = uuid4()
+    user_id = await create_user(engine)
     await register_interaction(engine, report.id, user_id, kind)
     original_time = datetime(2000, 1, 1, tzinfo=UTC)
     async with engine.begin() as connection:
@@ -252,7 +290,7 @@ async def test_opposite_interaction_preserves_original_record(
     engine, device_id = service_database
     report = await create_incident(engine, device_id)
     await seed_interactions(engine, report.id, 10)
-    user_id = uuid4()
+    user_id = await create_user(engine)
     await register_interaction(engine, report.id, user_id, first)
     second = (
         ReportInteractionKind.ABUSE
@@ -306,7 +344,7 @@ async def test_hidden_report_takes_precedence_over_repeat_and_author_permissions
 ) -> None:
     engine, device_id = service_database
     report = await create_incident(engine, device_id)
-    user_id = uuid4()
+    user_id = await create_user(engine)
     await register_interaction(engine, report.id, user_id, ReportInteractionKind.ABUSE)
     for actor in (user_id, report.author_id):
         for kind in ReportInteractionKind:
@@ -331,7 +369,7 @@ async def test_repeated_concurrent_actions_are_idempotent(
     engine, device_id = service_database
     report = await create_incident(engine, device_id)
     await seed_interactions(engine, report.id, 10)
-    user_id = uuid4()
+    user_id = await create_user(engine)
     results = await asyncio.gather(
         *(register_interaction(engine, report.id, user_id, kind) for _ in range(6)),
         return_exceptions=True,
@@ -354,7 +392,7 @@ async def test_opposite_concurrent_actions_return_one_success_and_one_conflict(
     engine, device_id = service_database
     report = await create_incident(engine, device_id)
     await seed_interactions(engine, report.id, 10)
-    user_id = uuid4()
+    user_id = await create_user(engine)
     results = await asyncio.gather(
         *(
             register_interaction(engine, report.id, user_id, kind)
@@ -450,7 +488,7 @@ async def test_details_count_only_confirmations_of_requested_report(
                 incident_time=time(20, 30),
                 address_reference="  perto da praça  ",
             ),
-            author_id=uuid4(),
+            author_id=await create_user(engine),
             device_id=device_id,
         )
     other = await create_incident(engine, device_id)
@@ -459,26 +497,26 @@ async def test_details_count_only_confirmations_of_requested_report(
             [
                 ReportInteraction(
                     report_id=report.id,
-                    user_id=uuid4(),
+                    user_id=await create_user(engine),
                     kind=ReportInteractionKind.CONFIRMATION,
                     created_at=datetime(2000, 1, 1, tzinfo=UTC),
                 ),
                 *[
                     ReportInteraction(
                         report_id=report.id,
-                        user_id=uuid4(),
+                        user_id=await create_user(engine),
                         kind=ReportInteractionKind.CONFIRMATION,
                     )
                     for _ in range(3)
                 ],
                 ReportInteraction(
                     report_id=report.id,
-                    user_id=uuid4(),
+                    user_id=await create_user(engine),
                     kind=ReportInteractionKind.ABUSE,
                 ),
                 ReportInteraction(
                     report_id=other.id,
-                    user_id=uuid4(),
+                    user_id=await create_user(engine),
                     kind=ReportInteractionKind.CONFIRMATION,
                 ),
             ]
@@ -540,7 +578,7 @@ async def test_database_serializes_opposite_interactions_from_same_user(
 ) -> None:
     engine, device_id = service_database
     report = await create_incident(engine, device_id)
-    user_id = uuid4()
+    user_id = await create_user(engine)
 
     async def insert_interaction(kind: ReportInteractionKind) -> ReportInteraction:
         async with AsyncSession(engine, expire_on_commit=False) as session:
@@ -624,7 +662,7 @@ async def test_http_creation_persists_and_returns_validation_and_limit_errors(
     service_database: tuple[AsyncEngine, UUID],
 ) -> None:
     engine, device_id = service_database
-    author_id = uuid4()
+    author_id = await create_user(engine)
 
     async def override_author() -> UUID:
         return author_id
