@@ -9,31 +9,32 @@ import {
   Alert,
 } from "react-native";
 import { useRouter } from "expo-router";
-import { theme } from "../src/theme";
+import { theme, useAppTheme } from "../src/theme";
 import { Button, Input, LinkText } from "../src/components/ui";
+import { useAuth } from "../src/features/auth/AuthContext";
 
 /**
- * Tela de Cadastro ("Criar conta")
- * Construída estritamente com os componentes reutilizáveis de src/components/ui/
- * e parâmetros da paleta do Figma (Fundo #E9E4F2, inputs #F8FAFC, botão #0F766E).
+ * Tela de Cadastro ("Criar conta") - RF01.
+ * 100% Responsiva e compatível com tema claro e escuro.
  */
 export default function RegisterScreen() {
   const router = useRouter();
+  const { colors } = useAppTheme();
+  const { login } = useAuth();
 
-  const [name, setName] = useState("");
+  const [nickname, setNickname] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Estados de erro para validação dupla no front
-  const [nameError, setNameError] = useState("");
+  // Estados de erro
+  const [nicknameError, setNicknameError] = useState("");
   const [phoneError, setPhoneError] = useState("");
   const [emailError, setEmailError] = useState("");
   const [passwordError, setPasswordError] = useState("");
 
   const formatPhone = (text: string) => {
-    // Máscara básica para telefone brasileiro (XX) XXXXX-XXXX
     const cleaned = text.replace(/\D/g, "");
     if (cleaned.length <= 2) return cleaned;
     if (cleaned.length <= 7) return `(${cleaned.slice(0, 2)}) ${cleaned.slice(2)}`;
@@ -42,13 +43,16 @@ export default function RegisterScreen() {
 
   const validateForm = (): boolean => {
     let isValid = true;
-    setNameError("");
+    setNicknameError("");
     setPhoneError("");
     setEmailError("");
     setPasswordError("");
 
-    if (!name.trim()) {
-      setNameError("Informe seu nome");
+    if (!nickname.trim()) {
+      setNicknameError("Informe um apelido");
+      isValid = false;
+    } else if (nickname.trim().length < 3) {
+      setNicknameError("O apelido deve ter pelo menos 3 caracteres");
       isValid = false;
     }
 
@@ -81,7 +85,7 @@ export default function RegisterScreen() {
 
       if (!hasMinLength || !hasUpper || !hasLower || !hasNumber || !hasSpecial) {
         setPasswordError(
-          "A senha deve ter no mínimo 8 caracteres, incluindo letra maiúscula, minúscula, número e caractere especial (RN08)."
+          "A senha deve ter no mínimo 8 caracteres, incluindo maiúscula, minúscula, número e símbolo (RN08)."
         );
         isValid = false;
       }
@@ -94,112 +98,105 @@ export default function RegisterScreen() {
     if (!validateForm()) return;
 
     setLoading(true);
-    try {
-      setTimeout(() => {
-        setLoading(false);
-        Alert.alert("Sucesso", "Conta criada com sucesso!", [
-          { text: "OK", onPress: () => router.push("/") },
-        ]);
-      }, 800);
-    } catch {
+    setTimeout(() => {
       setLoading(false);
-      Alert.alert("Erro", "Falha ao criar conta. Tente novamente.");
-    }
-  };
-
-  const handleAnonymousAccess = () => {
-    router.push("/map");
+      login(nickname.trim(), email.trim());
+      router.push("/");
+    }, 200);
   };
 
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      style={styles.keyboardView}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      style={[styles.keyboardView, { backgroundColor: colors.screenBackground }]}
     >
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.headerContainer}>
-          <Text style={styles.title}>Criar conta</Text>
-        </View>
-
-        <View style={styles.formContainer}>
-          <Input
-            placeholder="Nome"
-            value={name}
-            onChangeText={(text) => {
-              setName(text);
-              if (nameError) setNameError("");
-            }}
-            autoCapitalize="words"
-            error={nameError}
-          />
-
-          <Input
-            placeholder="Telefone"
-            value={phone}
-            onChangeText={(text) => {
-              setPhone(formatPhone(text));
-              if (phoneError) setPhoneError("");
-            }}
-            keyboardType="phone-pad"
-            maxLength={15}
-            error={phoneError}
-          />
-
-          <Input
-            placeholder="E-mail"
-            value={email}
-            onChangeText={(text) => {
-              setEmail(text);
-              if (emailError) setEmailError("");
-            }}
-            keyboardType="email-address"
-            autoCapitalize="none"
-            autoCorrect={false}
-            error={emailError}
-          />
-
-          <Input
-            placeholder="Senha"
-            value={password}
-            onChangeText={(text) => {
-              setPassword(text);
-              if (passwordError) setPasswordError("");
-            }}
-            secureTextEntry
-            autoCapitalize="none"
-            error={passwordError}
-          />
-
-          <View style={styles.actionButtonContainer}>
-            <Button
-              title="Cadastre-se"
-              variant="primary"
-              onPress={handleRegister}
-              isLoading={loading}
-              style={styles.registerButton}
-            />
+        <View style={styles.responsiveWrapper}>
+          <View style={styles.headerContainer}>
+            <Text style={[styles.title, { color: colors.text }]}>Criar conta</Text>
           </View>
 
-          <View style={styles.footerContainer}>
-            <LinkText
-              text="Já tem conta?"
-              actionText="Faça login!"
-              underline={true}
-              onPress={() => router.push("/")}
+          <View style={styles.formContainer}>
+            <Input
+              placeholder="Apelido"
+              value={nickname}
+              onChangeText={(text) => {
+                setNickname(text);
+                if (nicknameError) setNicknameError("");
+              }}
+              autoCapitalize="none"
+              autoCorrect={false}
+              error={nicknameError}
             />
 
-            <View style={styles.anonymousSpacing} />
-
-            <LinkText
-              text="Acessar sem login"
-              underline={false}
-              onPress={handleAnonymousAccess}
-              textStyle={styles.anonymousText}
+            <Input
+              placeholder="Telefone"
+              value={phone}
+              onChangeText={(text) => {
+                setPhone(formatPhone(text));
+                if (phoneError) setPhoneError("");
+              }}
+              keyboardType="phone-pad"
+              maxLength={15}
+              error={phoneError}
             />
+
+            <Input
+              placeholder="E-mail"
+              value={email}
+              onChangeText={(text) => {
+                setEmail(text);
+                if (emailError) setEmailError("");
+              }}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+              error={emailError}
+            />
+
+            <Input
+              placeholder="Senha"
+              value={password}
+              onChangeText={(text) => {
+                setPassword(text);
+                if (passwordError) setPasswordError("");
+              }}
+              secureTextEntry
+              autoCapitalize="none"
+              error={passwordError}
+            />
+
+            <View style={styles.actionButtonContainer}>
+              <Button
+                title="Cadastre-se"
+                variant="primary"
+                onPress={handleRegister}
+                isLoading={loading}
+                style={styles.registerButton}
+              />
+            </View>
+
+            <View style={styles.footerContainer}>
+              <LinkText
+                text="Já tem conta?"
+                actionText="Faça login!"
+                underline={true}
+                onPress={() => router.push("/login")}
+              />
+
+              <View style={styles.backSpacing} />
+
+              <LinkText
+                text="Voltar ao mapa"
+                underline={false}
+                onPress={() => router.push("/")}
+                textStyle={[styles.backToMapText, { color: colors.textMuted }]}
+              />
+            </View>
           </View>
         </View>
       </ScrollView>
@@ -210,13 +207,20 @@ export default function RegisterScreen() {
 const styles = StyleSheet.create({
   keyboardView: {
     flex: 1,
-    backgroundColor: theme.colors.screenBackground,
+    width: "100%",
+    height: "100%",
   },
   scrollContent: {
     flexGrow: 1,
     justifyContent: "center",
-    paddingHorizontal: theme.spacing.xl,
-    paddingVertical: theme.spacing.xxl,
+    alignItems: "center",
+    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: theme.spacing.xl,
+  },
+  responsiveWrapper: {
+    width: "100%",
+    maxWidth: 440,
+    alignSelf: "center",
   },
   headerContainer: {
     alignItems: "center",
@@ -225,29 +229,29 @@ const styles = StyleSheet.create({
   title: {
     fontSize: theme.typography.sizes.title,
     fontWeight: theme.typography.weights.extrabold,
-    color: theme.colors.text,
     fontFamily: theme.typography.fontFamily,
+    textAlign: "center",
   },
   formContainer: {
     width: "100%",
   },
   actionButtonContainer: {
     alignItems: "center",
-    marginVertical: theme.spacing.lg,
+    marginVertical: theme.spacing.md,
   },
   registerButton: {
-    width: "60%",
+    width: "100%",
+    maxWidth: 240,
     minHeight: 52,
   },
   footerContainer: {
     alignItems: "center",
-    marginTop: theme.spacing.sm,
+    marginTop: theme.spacing.xs,
   },
-  anonymousSpacing: {
-    height: theme.spacing.lg,
+  backSpacing: {
+    height: theme.spacing.md,
   },
-  anonymousText: {
+  backToMapText: {
     fontSize: theme.typography.sizes.sm,
-    color: theme.colors.text,
   },
 });

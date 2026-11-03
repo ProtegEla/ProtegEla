@@ -26,6 +26,13 @@ export const colors = {
   success: "#10B981",
   info: "#3B82F6",
 
+  // Perfil e menus
+  profileButtonBackground: "#FFFFFF",
+  profileDangerBackground: "#EAA8B5",
+  profileDangerText: "#1E293B",
+  profileTitlePurple: "#6E47A9",
+  profileSubtitlePurple: "#8C6FB7",
+
   // Níveis de Zonas de Risco (RN02)
   riskModerate: "#FFB74D",
   riskHigh: "#FF7043",

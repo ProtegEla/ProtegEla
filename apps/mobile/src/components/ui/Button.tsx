@@ -6,7 +6,7 @@ import {
   ActivityIndicator,
   TouchableOpacityProps,
 } from "react-native";
-import { theme } from "../../theme";
+import { theme, useAppTheme } from "../../theme";
 
 export interface ButtonProps extends TouchableOpacityProps {
   title: string;
@@ -15,8 +15,7 @@ export interface ButtonProps extends TouchableOpacityProps {
 }
 
 /**
- * Componente de Botão Acessível (RNF08).
- * Garante altura mínima para toque seguro (48px) e contraste de cores adequado.
+ * Componente de Botão Acessível (RNF08) com suporte a tema.
  */
 export const Button: React.FC<ButtonProps> = ({
   title,
@@ -26,29 +25,35 @@ export const Button: React.FC<ButtonProps> = ({
   style,
   ...rest
 }) => {
-  const getVariantStyle = () => {
+  const { colors } = useAppTheme();
+
+  const getBackgroundColor = () => {
     switch (variant) {
       case "danger":
-        return styles.danger;
+        return colors.danger;
       case "secondary":
-        return styles.secondary;
+        return colors.primaryPurple;
       case "outline":
-        return styles.outline;
+        return "transparent";
       default:
-        return styles.primary;
+        return colors.primaryAction;
     }
   };
 
-  const getTextStyle = () => {
-    if (variant === "outline") return styles.textOutline;
-    return styles.textSolid;
+  const getTextColor = () => {
+    if (variant === "outline") return colors.primaryAction;
+    return "#FFFFFF";
   };
 
   return (
     <TouchableOpacity
       style={[
         styles.base,
-        getVariantStyle(),
+        {
+          backgroundColor: getBackgroundColor(),
+          borderWidth: variant === "outline" ? 1.5 : 0,
+          borderColor: variant === "outline" ? colors.primaryAction : "transparent",
+        },
         disabled && styles.disabled,
         style,
       ]}
@@ -57,9 +62,9 @@ export const Button: React.FC<ButtonProps> = ({
       {...rest}
     >
       {isLoading ? (
-        <ActivityIndicator color={variant === "outline" ? theme.colors.primary : "#FFFFFF"} />
+        <ActivityIndicator color={variant === "outline" ? colors.primaryAction : "#FFFFFF"} />
       ) : (
-        <Text style={[styles.textBase, getTextStyle()]}>{title}</Text>
+        <Text style={[styles.textBase, { color: getTextColor() }]}>{title}</Text>
       )}
     </TouchableOpacity>
   );
@@ -67,26 +72,12 @@ export const Button: React.FC<ButtonProps> = ({
 
 const styles = StyleSheet.create({
   base: {
-    minHeight: 48, // Alvo de toque acessível (RNF08)
-    borderRadius: 24, // Borda arredondada suave do Figma
+    minHeight: 48,
+    borderRadius: 24,
     justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: theme.spacing.lg,
     paddingVertical: theme.spacing.sm,
-  },
-  primary: {
-    backgroundColor: theme.colors.primaryAction,
-  },
-  secondary: {
-    backgroundColor: theme.colors.primaryPurple,
-  },
-  danger: {
-    backgroundColor: theme.colors.danger,
-  },
-  outline: {
-    backgroundColor: "transparent",
-    borderWidth: 1.5,
-    borderColor: theme.colors.primaryAction,
   },
   disabled: {
     opacity: 0.5,
@@ -95,11 +86,5 @@ const styles = StyleSheet.create({
     fontSize: theme.typography.sizes.md,
     fontWeight: theme.typography.weights.bold,
     fontFamily: theme.typography.fontFamily,
-  },
-  textSolid: {
-    color: "#FFFFFF",
-  },
-  textOutline: {
-    color: theme.colors.primaryAction,
   },
 });

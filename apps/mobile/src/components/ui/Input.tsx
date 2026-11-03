@@ -8,7 +8,7 @@ import {
   ViewStyle,
   Platform,
 } from "react-native";
-import { theme } from "../../theme";
+import { theme, useAppTheme } from "../../theme";
 
 export interface InputProps extends TextInputProps {
   label?: string;
@@ -17,28 +17,37 @@ export interface InputProps extends TextInputProps {
 }
 
 /**
- * Componente de Input Reutilizável com suporte a estados de erro e acessibilidade.
- * Segue o padrão visual do Figma (Fundo #F8FAFC, cantos arredondados, tipografia Manrope).
+ * Componente de Input Reutilizável com suporte a estados de erro e modo escuro.
  */
 export const Input: React.FC<InputProps> = ({
   label,
   error,
   containerStyle,
   style,
-  placeholderTextColor = theme.colors.textMuted,
+  placeholderTextColor,
   ...rest
 }) => {
+  const { colors } = useAppTheme();
+
   return (
     <View style={[styles.container, containerStyle]}>
-      {label && <Text style={styles.label}>{label}</Text>}
-      <View style={[styles.inputWrapper, !!error && styles.inputWrapperError]}>
+      {label && <Text style={[styles.label, { color: colors.text }]}>{label}</Text>}
+      <View
+        style={[
+          styles.inputWrapper,
+          {
+            backgroundColor: colors.inputBackground,
+            borderColor: error ? colors.danger : colors.border,
+          },
+        ]}
+      >
         <TextInput
-          style={[styles.input, style]}
-          placeholderTextColor={placeholderTextColor}
+          style={[styles.input, { color: colors.text }, style]}
+          placeholderTextColor={placeholderTextColor || colors.textMuted}
           {...rest}
         />
       </View>
-      {!!error && <Text style={styles.errorText}>{error}</Text>}
+      {!!error && <Text style={[styles.errorText, { color: colors.danger }]}>{error}</Text>}
     </View>
   );
 };
@@ -51,24 +60,17 @@ const styles = StyleSheet.create({
   label: {
     fontSize: theme.typography.sizes.sm,
     fontWeight: theme.typography.weights.medium,
-    color: theme.colors.text,
     marginBottom: theme.spacing.xs,
   },
   inputWrapper: {
-    backgroundColor: theme.colors.inputBackground,
     borderRadius: 20,
-    minHeight: 54,
+    minHeight: 52,
     justifyContent: "center",
     paddingHorizontal: theme.spacing.md,
     borderWidth: 1,
-    borderColor: "transparent",
-  },
-  inputWrapperError: {
-    borderColor: theme.colors.danger,
   },
   input: {
     fontSize: theme.typography.sizes.md,
-    color: theme.colors.text,
     fontFamily: theme.typography.fontFamily,
     backgroundColor: "transparent",
     ...Platform.select({
@@ -80,7 +82,6 @@ const styles = StyleSheet.create({
     }),
   },
   errorText: {
-    color: theme.colors.danger,
     fontSize: theme.typography.sizes.xs,
     marginTop: 4,
     marginLeft: theme.spacing.sm,

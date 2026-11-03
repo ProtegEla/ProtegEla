@@ -5,6 +5,7 @@ import {
   StyleSheet,
   TouchableOpacityProps,
   TextStyle,
+  StyleProp,
 } from "react-native";
 import { theme } from "../../theme";
 
@@ -13,8 +14,8 @@ export interface LinkTextProps extends TouchableOpacityProps {
   actionText?: string;
   underline?: boolean;
   align?: "left" | "center" | "right";
-  textStyle?: TextStyle;
-  actionStyle?: TextStyle;
+  textStyle?: StyleProp<TextStyle>;
+  actionStyle?: StyleProp<TextStyle>;
 }
 
 /**
