@@ -5,6 +5,7 @@
 - **RF08**: Leitura, adição, edição e exclusão de comentários próprios e respostas em escadinha.
 
 ## 2. Estrutura Direta de Arquivos
-- `router.py`: Rotas `/api/v1/comments/*` e esquemas Pydantic.
+- `router.py`: Rotas `/api/v1/reports/{report_id}/comments`, delegando ao serviço.
+- `schemas.py`: Contratos HTTP e projeção pública.
 - `service.py`: Lógica de hierarquia de comentários e validação de permissões de autor.
 - `models.py`: Modelos SQLAlchemy para comentários e autorreferência para respostas.

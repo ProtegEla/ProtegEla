@@ -15,6 +15,7 @@ from src.modules.reports.models import Report  # noqa: F401 -- registra em Base.
 
 from src.modules.users.models import User, EmergencyContact
 from src.modules.auth.models import LoginAttempt
+from src.modules.comments.models import Comment  # noqa: F401
 
 config = context.config
 

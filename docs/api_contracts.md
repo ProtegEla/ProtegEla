@@ -168,8 +168,8 @@ Toda falha (códigos HTTP 4xx e 5xx) deve obrigatoriamente retornar uma estrutur
 | **reports** | `POST` | `/api/v1/reports` | Registro de incidente (RF09) | Implementado com consulta de conta |
 | **reports** | `POST` | `/api/v1/reports/{id}/confirm` | Confirmação da veracidade do relato (RN01) | Implementado com consulta de conta |
 | **reports** | `POST` | `/api/v1/reports/{id}/report-abuse` | Denúncia de relato falso/impróprio (RN06) | Implementado com consulta de conta |
-| **comments** | `GET` | `/api/v1/reports/{id}/comments` | Consulta de comentários e respostas (RF08) | Proposta em discussão |
-| **comments** | `POST` | `/api/v1/reports/{id}/comments` | Inserção de comentário | Proposta em discussão |
+| **comments** | `GET` | `/api/v1/reports/{id}/comments` | Consulta de comentários e respostas (RF08) | Implementado |
+| **comments** | `POST` | `/api/v1/reports/{id}/comments` | Inserção de comentário | Implementado |
 | **risk_zones** | `GET` | `/api/v1/risk-zones` | Zonas de risco poligonais agregadas (RN03) | Proposta em discussão |
 | **routes** | `POST` | `/api/v1/routes/calculate` | Cálculo de rota segura desviando de áreas de risco (RF15) | Proposta em discussão |
 | **emergency** | `POST` | `/api/v1/emergency/panic` | Registro de acionamento do botão de pânico (RF14) | Proposta em discussão |
@@ -186,7 +186,7 @@ Toda falha (códigos HTTP 4xx e 5xx) deve obrigatoriamente retornar uma estrutur
 - As mutações de relatos validam o token de acesso e consultam `users.id`; conta inexistente retorna `401 UNAUTHORIZED`. O bloqueio provisório `503 AUTHENTICATION_UNAVAILABLE` foi removido.
 - Autoria e interações referenciam `users.id`, sem exclusão em cascata. A exclusão completa de conta depende de implementação própria.
 - Alembic une os históricos em `0004_merge_auth_reports`; `0005_report_user_foreign_keys` adiciona as referências e rejeita dados órfãos sem apagá-los.
-- Detalhes públicos continuam sem autenticação e sem identificação da autora. Comentários permanecem pendentes.
+- Detalhes públicos continuam sem autenticação e sem identificação da autora. Comentários estão implementados conforme a seção 9.
 
 As seções abaixo preservam o histórico das entregas; menções à integração de usuárias pendente descrevem o estado anterior a esta integração.
 
@@ -645,3 +645,24 @@ A consulta de zonas agrupadas e o fluxo administrativo de revisão/restauração
 | 422 | `PASSWORD_TOO_SHORT`, `PASSWORD_MISSING_UPPERCASE`, `PASSWORD_MISSING_LOWERCASE`, `PASSWORD_MISSING_DIGIT`, `PASSWORD_MISSING_SPECIAL_CHAR` | Senha não atende à RN08. |
 
 **Armazenamento (LGPD):** o e-mail e os telefones dos contatos são cifrados em repouso (Fernet); a unicidade do e-mail é verificada por HMAC-SHA256 (`email_lookup`); a senha é armazenada apenas como hash Argon2id.
+
+## 9. Comentários — RF08
+
+Rotas sob `/api/v1/reports/{report_id}/comments` (UUIDs v4):
+
+| Método | Sufixo | Entrada | Sucesso |
+| --- | --- | --- | --- |
+| GET | — | `page=1`, `page_size=20` (máximo 100) | 200: `data: []`, `meta: {page, page_size, total_records}` |
+| POST | — | `{text, parent_id?}` | 201: `{data: comentario}` |
+| PATCH | `/{comment_id}` | `{text}` | 200: `{data: comentario}` |
+| DELETE | `/{comment_id}` | — | 204 sem corpo |
+
+O comentário contém `id`, `report_id`, `parent_id`, `author` (username público), `text`, `is_deleted`, `created_at` e `updated_at` (UTC). Não expõe UUID da conta, e-mail ou telefone. Texto obrigatório com 1–1.000 caracteres após remover espaços nas extremidades; campos extras são rejeitados.
+
+A leitura é pública. Escritas exigem access token e conta existente; edição e remoção são exclusivas da autora do comentário, inclusive quando outra pessoa criou o relato. O anonimato do relato não torna comentários anônimos.
+
+A lista plana é ordenada por `created_at, id`, do mais antigo ao mais recente, e paginada por comentário; `parent_id` permite montar a escadinha entre páginas. Respostas podem responder outras respostas, sempre no mesmo relato. O vínculo com o pai é imutável.
+
+A remoção apaga texto e autoria, mantendo `is_deleted=true` e a posição com `text=null`, `author=null` para preservar respostas de terceiros. Não é possível editar nem responder a um comentário removido. A contagem inclui essas posições.
+
+Erros padronizados: 401 para credenciais inválidas/conta inexistente; 403 para edição/remoção alheia; 404 para relato ocultado/inexistente, comentário inexistente/removido ou pai de outro relato; 422 para entrada inválida. Mutações bloqueiam o relato na mesma ordem das denúncias para coordenar ocultação concorrente. Migração: `0006_create_comments`.

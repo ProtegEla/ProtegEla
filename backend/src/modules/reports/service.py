@@ -127,6 +127,21 @@ class ReportService:
             confirmations_count=row["confirmations_count"],
         )
 
+    async def require_visible(self, report_id: UUID, *, lock: bool = False) -> Report:
+        """Consulta reutilizável; mutações bloqueiam o relato contra ocultação concorrente."""
+        self._validate_uuid(report_id, "report_id")
+        statement = select(Report).where(
+            Report.id == report_id, Report.is_hidden.is_(False)
+        )
+        if lock:
+            statement = statement.with_for_update()
+        report = await self.session.scalar(
+            statement.execution_options(populate_existing=True, autoflush=False)
+        )
+        if report is None:
+            raise EntityNotFoundException("Relato não encontrado.")
+        return report
+
     async def confirm(self, report_id: UUID, *, user_id: UUID) -> None:
         await self._register_interaction(
             report_id, user_id=user_id, kind=ReportInteractionKind.CONFIRMATION
@@ -145,14 +160,7 @@ class ReportService:
         try:
             # Serializa interações do relato, inclusive de usuárias diferentes,
             # para avaliar a RN06 e a visibilidade na mesma transação.
-            report = await self.session.scalar(
-                select(Report)
-                .where(Report.id == report_id, Report.is_hidden.is_(False))
-                .with_for_update()
-                .execution_options(populate_existing=True, autoflush=False)
-            )
-            if report is None:
-                raise EntityNotFoundException("Relato não encontrado.")
+            report = await self.require_visible(report_id, lock=True)
             if report.author_id == user_id:
                 raise ForbiddenException(
                     "A autora não pode confirmar ou denunciar o próprio relato."

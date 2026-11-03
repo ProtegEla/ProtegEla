@@ -128,3 +128,36 @@ def test_orphan_reference_aborts_without_deleting_data(migration_database):
             connection.scalar(text("SELECT version_num FROM alembic_version"))
             == "0004_merge_auth_reports"
         )
+
+
+def test_comments_migration_preserves_existing_reports(migration_database):
+    engine, migrate = migration_database
+    migrate("upgrade", "0005_report_user_foreign_keys")
+    user_id = uuid4()
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO users (id, username, email_encrypted, email_lookup, "
+                "password_hash, created_at, updated_at) VALUES "
+                "(:id, 'teste', 'fixture', :lookup, 'fixture', now(), now())"
+            ),
+            {"id": user_id, "lookup": user_id.hex},
+        )
+        report_id = insert_report(connection, user_id)
+    migrate("upgrade", "head")
+    with engine.begin() as connection:
+        assert connection.scalar(text("SELECT count(*) FROM comments")) == 0
+        connection.execute(
+            text(
+                "INSERT INTO comments (id, report_id, author_id, text) "
+                "VALUES (:id, :report_id, :author_id, 'Comentário')"
+            ),
+            {"id": uuid4(), "report_id": report_id, "author_id": user_id},
+        )
+    migrate("downgrade", "0005_report_user_foreign_keys")
+    with engine.connect() as connection:
+        assert connection.scalar(text("SELECT id FROM reports")) == report_id
+    migrate("upgrade", "head")
+    with engine.connect() as connection:
+        assert connection.scalar(text("SELECT count(*) FROM comments")) == 0
+        assert connection.scalar(text("SELECT id FROM reports")) == report_id
