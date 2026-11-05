@@ -9,6 +9,7 @@ from src.modules.routes.router import router as routes_router
 from src.modules.emergency.router import router as emergency_router
 from src.modules.support_locations.router import router as support_locations_router
 from src.modules.notifications.router import router as notifications_router
+from src.modules.safety_guides.router import router as safety_guides_router
 
 api_v1_router = APIRouter()
 
@@ -33,3 +34,4 @@ api_v1_router.include_router(routes_router)
 api_v1_router.include_router(emergency_router)
 api_v1_router.include_router(support_locations_router)
 api_v1_router.include_router(notifications_router)
+api_v1_router.include_router(safety_guides_router)
