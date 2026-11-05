@@ -177,6 +177,8 @@ Toda falha (códigos HTTP 4xx e 5xx) deve obrigatoriamente retornar uma estrutur
 | **support_locations**| `GET` | `/api/v1/support-locations/nearby` | Delegacias e hospitais próximos via OSM/Overpass (RF12) | Proposta em discussão |
 | **notifications** | `POST` | `/api/v1/notifications/proximity-alert` | Verificação de entrada em zona de risco (RF13) | Proposta em discussão |
 | **core** | `GET` | `/api/v1/health` | Healthcheck de integridade do backend e banco | Aprovado |
+| **safety_guides** | `GET` | `/api/v1/safety-guides` | Lista de orientações e dicas de segurança (RF11) | Implementado |
+| **safety_guides** | `GET` | `/api/v1/safety-guides/{slug}` | Texto completo de uma orientação (RF11) | Implementado |
 
 ---
 
@@ -666,3 +668,16 @@ A lista plana é ordenada por `created_at, id`, do mais antigo ao mais recente, 
 A remoção apaga texto e autoria, mantendo `is_deleted=true` e a posição com `text=null`, `author=null` para preservar respostas de terceiros. Não é possível editar nem responder a um comentário removido. A contagem inclui essas posições.
 
 Erros padronizados: 401 para credenciais inválidas/conta inexistente; 403 para edição/remoção alheia; 404 para relato ocultado/inexistente, comentário inexistente/removido ou pai de outro relato; 422 para entrada inválida. Mutações bloqueiam o relato na mesma ordem das denúncias para coordenar ocultação concorrente. Migração: `0006_create_comments`.
+
+## 10. Orientações de Segurança — RF11
+
+Rotas públicas sob `/api/v1/safety-guides`, sem necessidade de access token (acesso sem login, RF04). Somente leitura, o conteúdo é mantido por migrações do Alembic.
+
+| Método | Sufixo | Entrada | Sucesso |
+| --- | --- | --- | --- |
+| GET | — | — | 200: `{data: [resumo]}` |
+| GET | `/{slug}` | `slug`: `^[a-z0-9-]{1,80}$` | 200: `{data: orientacao}` |
+
+O resumo contém `id`, `slug`, `title`, `summary` e `position`. A orientação completa contém esses campos mais `content` e `updated_at` (UTC). A lista é ordenada por `position, id` e não é paginada.
+
+Erros padronizados: 404 `NOT_FOUND` para slug inexistente; 422 `VALIDATION_ERROR` para slug fora do padrão. Migração: `0007_create_safety_guides`.
