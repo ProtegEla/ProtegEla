@@ -666,3 +666,50 @@ A lista plana é ordenada por `created_at, id`, do mais antigo ao mais recente, 
 A remoção apaga texto e autoria, mantendo `is_deleted=true` e a posição com `text=null`, `author=null` para preservar respostas de terceiros. Não é possível editar nem responder a um comentário removido. A contagem inclui essas posições.
 
 Erros padronizados: 401 para credenciais inválidas/conta inexistente; 403 para edição/remoção alheia; 404 para relato ocultado/inexistente, comentário inexistente/removido ou pai de outro relato; 422 para entrada inválida. Mutações bloqueiam o relato na mesma ordem das denúncias para coordenar ocultação concorrente. Migração: `0006_create_comments`.
+
+## 10. Consulta de Delegacias Próximas — RF12
+
+### 10.1. Requisição
+
+`GET /api/v1/support-locations/nearby`
+
+Parâmetros obrigatórios na query string:
+
+| Parâmetro | Tipo | Validação |
+|---|---|---|
+| `latitude` | Número | Entre -90 e 90 |
+| `longitude` | Número | Entre -180 e 180 |
+
+Exemplo:
+
+`GET /api/v1/support-locations/nearby?latitude=-23.5505&longitude=-46.6333`
+
+### 10.2. Resposta de Sucesso
+
+A API busca candidatas em um raio de 5 km em linha reta da localização informada e retorna até cinco delegacias, ordenadas pela menor distância a pé pelas ruas. Se encontrar menos de cinco candidatas nesse raio, retorna os locais disponíveis.
+
+```json
+{
+  "data": [
+    {
+      "id": "node/12345",
+      "name": "Delegacia de exemplo",
+      "latitude": -23.5505,
+      "longitude": -46.6333,
+      "distance_m": 420
+    }
+  ]
+}
+```
+
+`id` identifica o elemento no OpenStreetMap. `name` pode ser `null` se o OSM não fornecer um nome. `distance_m` é a distância a pé, em metros, calculada pelo OpenRouteService.
+
+### 10.3. Fontes de Dados, Erros e Privacidade
+
+- As delegacias são consultadas no OpenStreetMap por meio da Overpass API.
+- Se a Overpass estiver indisponível, o backend tenta usar locais de apoio guardados no cache. (AINDA NÃO DISPONÍVEL)
+- O OpenRouteService calcula as distâncias a pé dos locais até a posição informada.
+- Se não houver locais em cache quando a Overpass falhar, ou se não for possível calcular as distâncias, a API retorna `503 EXTERNAL_SERVICE_UNAVAILABLE`.
+- Coordenadas ausentes ou inválidas retornam `422 VALIDATION_ERROR`.
+- As respostas de erro seguem o envelope padronizado definido neste documento.
+- A localização da usuária é processada durante a requisição e não é armazenada.
