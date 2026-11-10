@@ -91,3 +91,16 @@ async def delete_comment(
 ) -> Response:
     await service.delete(report_id, comment_id, author_id=author_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get(
+    "/reports/{report_id}/comments/{comment_id}", response_model=CommentResponse
+)
+async def get_comment(
+    report_id: UUID4,
+    comment_id: UUID4,
+    service: Annotated[CommentService, Depends(get_comment_service)],
+) -> CommentResponse:
+    return CommentResponse(
+        data=CommentRead.model_validate(await service.get(report_id, comment_id))
+    )

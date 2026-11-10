@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Path, status
+from fastapi import APIRouter, Depends, Header, Path, Response, status
 from pydantic import UUID4
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -117,3 +117,26 @@ async def report_abuse(
 ) -> ReportAbuseRegistered:
     await service.report_abuse(report_id, user_id=user_id)
     return ReportAbuseRegistered(data=AbuseData(report_id=report_id))
+
+
+@router.put("/{id}", response_model=ReportCreated)
+async def edit_report(
+    report_id: Annotated[UUID4, Path(alias="id")],
+    payload: ReportCreate,
+    author_id: Annotated[UUID, Depends(get_current_author)],
+    service: Annotated[ReportService, Depends(get_report_service)],
+) -> ReportCreated:
+    report = await service.edit(
+        report_id, payload.to_service_data(), author_id=author_id
+    )
+    return ReportCreated(data=ReportRead.from_report(report))
+
+
+@router.delete("/{id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_report(
+    report_id: Annotated[UUID4, Path(alias="id")],
+    author_id: Annotated[UUID, Depends(get_current_author)],
+    service: Annotated[ReportService, Depends(get_report_service)],
+) -> Response:
+    await service.delete(report_id, author_id=author_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
