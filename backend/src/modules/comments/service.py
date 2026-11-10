@@ -62,6 +62,20 @@ class CommentService:
         )
         return CommentDetails(**result.mappings().one())
 
+    async def get(self, report_id: UUID, comment_id: UUID) -> CommentDetails:
+        await self.reports.require_visible(report_id, lock=True)
+        result = await self.session.execute(
+            self._projection().where(
+                Comment.id == comment_id,
+                Comment.report_id == report_id,
+                Comment.is_deleted.is_(False),
+            )
+        )
+        row = result.mappings().one_or_none()
+        if row is None:
+            raise EntityNotFoundException("Comentário não encontrado.")
+        return CommentDetails(**row)
+
     async def list(
         self, report_id: UUID, *, page: int = 1, page_size: int = 20
     ) -> tuple[list[CommentDetails], int]:

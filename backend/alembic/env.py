@@ -17,6 +17,8 @@ from src.modules.users.models import User, EmergencyContact
 from src.modules.auth.models import LoginAttempt
 from src.modules.comments.models import Comment  # noqa: F401
 
+from src.modules.risk_zones.models import SSPSafetyRecord  # noqa: F401
+
 config = context.config
 
 if config.config_file_name is not None:
