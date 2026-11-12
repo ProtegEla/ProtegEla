@@ -123,4 +123,4 @@ class OpenRouteServiceDirectionsClient:
                 "Não foi possível calcular a distância a pé."
             ) from exc
 
-    return result.routes[0].summary.distance
+        return result.routes[0].summary.distance
