@@ -667,9 +667,121 @@ A remoção apaga texto e autoria, mantendo `is_deleted=true` e a posição com 
 
 Erros padronizados: 401 para credenciais inválidas/conta inexistente; 403 para edição/remoção alheia; 404 para relato ocultado/inexistente, comentário inexistente/removido ou pai de outro relato; 422 para entrada inválida. Mutações bloqueiam o relato na mesma ordem das denúncias para coordenar ocultação concorrente. Migração: `0006_create_comments`.
 
-## 10. Consulta de Delegacias Próximas — RF12
 
-### 10.1. Requisição
+## 10. Histórico de atividade própria — RF04
+
+`GET /api/v1/users/me/activity` exige access token e conta existente. Aceita
+`page` (padrão 1, mínimo 1) e `page_size` (padrão 20, entre 1 e 100).
+Retorna `200` com `{data: [...], meta: {page, page_size, total_records}}`.
+Cada item contém `type` (`report` ou `comment`), `id`, `report_id`, `text`
+(descrição do relato, possivelmente null, ou texto do comentário) e `created_at` UTC.
+A ordenação é por criação decrescente, UUID decrescente e tipo para desempate;
+edições não mudam a posição. A paginação é sobre a lista combinada.
+Somente atividades da conta autenticada são incluídas, inclusive relatos anônimos.
+Relatos ocultados, seus comentários e comentários removidos ficam fora da lista.
+Não são expostos UUID de autora, dispositivo, e-mail ou telefone.
+
+Acesso a partir da lista:
+
+- Relato: `GET /api/v1/reports/{report_id}` (contrato público existente).
+- Comentário: novo `GET /api/v1/reports/{report_id}/comments/{id}`, público,
+  retorna `200 {data: comentario}` no mesmo formato da seção 9. Comentário
+  removido, de outro relato ou pertencente a relato ocultado retorna 404.
+- Edição do relato: novo `PUT /api/v1/reports/{id}` autenticado, substitui todos
+  os campos editáveis usando o mesmo corpo da criação (`ReportCreate`). Campos
+  opcionais omitidos ficam null. Retorna `200 {data: relato}` como na criação;
+  preserva autoria, dispositivo, criação, confirmações e estado de moderação.
+  Não exige `X-Device-Id` e não consome a cota de criação.
+- Remoção do relato: novo `DELETE /api/v1/reports/{id}` autenticado,
+  retorna 204 sem corpo. Exclusão definitiva e atômica do relato, de todas as
+  suas interações e de toda a discussão (incluindo respostas de outras contas).
+- Edição e remoção de comentários usam PATCH/DELETE da seção 9, preservando
+  respostas quando apenas um comentário é removido.
+
+PUT/DELETE de relatos são exclusivos da autora (403 para outra conta), inclusive
+em publicação anônima. Relatos inexistentes/ocultados retornam 404. Erros de
+identidade retornam 401 e entradas inválidas retornam 422 no envelope global.
+Mutações bloqueiam a linha do relato, coordenando edição/exclusão com comentários
+e denúncias. Não há restauração ou reexibição de conteúdo ocultado.
+Não há alteração de tabelas ou necessidade de migração nesta entrega.
+
+## 11. Pontos de perigo no mapa — RF06
+
+Consultas públicas, sem token. Geometrias GeoJSON em WGS84, com coordenadas
+`[longitude, latitude]`. Relatos ocultados e dados pessoais não são expostos.
+
+| Método | Rota | Resposta 200 |
+| --- | --- | --- |
+| GET | `/api/v1/risk-zones?bbox=west,south,east,north` | `{data: FeatureCollection, meta: {total_records}}` |
+| GET | `/api/v1/risk-zones/{id}/incidents?page=1&page_size=20` | `{data: [incidente], meta: {page, page_size, total_records}}` |
+
+A `bbox` é obrigatória, finita e ordenada (`west < east`, `south < north`),
+com longitude entre -180 e 180 e latitude entre -90 e 90. Limites:
+área de até 25 km² (retângulo na esfera de raio médio 6.371.008,8 m) e até
+500 zonas por consulta; exceder retorna
+`422 VALIDATION_ERROR`, solicitando aproximar o mapa, sem truncar resultados.
+A consulta inclui zonas cuja geometria intersecta a caixa, inclusive suas bordas.
+
+Cada Feature contém `id`, `geometry` (Point isolado ou Polygon/MultiPolygon
+agrupado) e `properties`: `marker_location` (GeoJSON Point dentro da geometria),
+`categories` (categorias existentes, sem duplicatas), `sources` (`app`, `ssp`)
+e `incidents_count`. Ícones e cores são definidos pelo frontend a partir das
+categorias; grupos mistos preservam todas as categorias. Não se atribui categoria
+ou nível de risco arbitrariamente a um grupo.
+
+O clique lista os incidentes da zona, ordenados por data decrescente e UUID para
+desempate. Cada item contém `id`, `source`, `category`, `location` (GeoJSON Point),
+`description` (nullable), `incident_date` e `report_id` (UUID do relato ou null
+para SSP). Detalhes/comentários do app usam as rotas existentes de relatos.
+Paginação: página mínima 1, tamanho padrão 20 e máximo 100; zona ausente retorna
+404. Zonas usam UUID v5 derivado dos pares ordenados `(origem, UUID)` dos membros
+(exceção à convenção UUID v4 dos recursos persistidos). O identificador independe
+da `bbox`, mas muda ao alterar a composição; identificadores antigos retornam 404.
+
+**RN03 — interpretação adotada:** agrupar por conectividade entre incidentes
+distantes até 20 m (inclusive), independentemente da categoria/origem. Assim,
+A–B e B–C próximos pertencem ao mesmo grupo mesmo se A–C exceder 20 m.
+O limite vale para a ligação entre pontos, não para o diâmetro final do polígono;
+essa interpretação permite cobrir ruas/quarteirões.
+Distâncias são métricas no PostGIS; nunca em graus. Para grupos, o serviço une
+buffers de 10 m dos pontos, preservando concavidades; um incidente isolado retorna
+Point. O agrupamento considera membros fora da caixa para não mudar na borda
+do mapa e reflete criação, edição, exclusão e ocultação dos relatos.
+
+**Pendências:** validar fonte SSP-SP, coordenadas, licença, categorias e estratégia
+de atualização antes da importação; registros sem localização adequada não viram
+pontos inventados. Fórmula/limiares RN02 e perda de peso RN05 precisam ser definidos
+antes de expor pontuação, severidade ou elegibilidade para rotas (RN01).
+
+
+Persistência SSP (subetapa 3): `0007_ssp_safety_records` e comando administrativo
+`python -m src.modules.risk_zones.import_ssp`; uso em `risk_zones/README.md`.
+Sem endpoint novo nesta etapa. Apenas registros `is_active=true` poderão compor
+as consultas futuras; reimportação de versão posterior inválida desativa o ponto.
+
+
+Agrupamento RN03 disponível apenas no serviço (subetapa 4), sem novas rotas ou
+migração. Distâncias elipsoidais de até 20 m, com tolerância numérica de 0,1 µm;
+Point isolado ou união de buffers de 10 m, marcador interno e composição pública.
+Pontuação/validade temporal e desempenho com volume real permanecem pendentes.
+
+
+Subetapa 5: ambas as rotas acima estão implementadas, sem autenticação. `bbox`
+é obrigatória; UUID de zona deve ser v5. Metadados e página vazia preservam a
+contagem. Identificador desatualizado retorna `404 NOT_FOUND`; entrada inválida,
+área excedida ou mais de 500 zonas retorna `422 VALIDATION_ERROR`, no envelope
+global. Ordenação das zonas por UUID crescente; incidentes por data, UUID e origem
+decrescentes para desempate. Não há truncamento silencioso nem nova migração.
+
+
+Revisão final: migração `0008_risk_geography_indexes` otimiza vizinhança sem alterar
+rotas/payloads. Recorte backend preparado para integração; dados SSP reais ainda
+exigem validação de licença/precisão e carga administrativa. Severidade/pontuação
+não são retornadas. Limitações e medição sintética em `risk_zones/README.md`.
+
+## 12. Consulta de Delegacias Próximas — RF12
+
+### 12.1. Requisição
 
 `GET /api/v1/support-locations/nearby`
 
@@ -684,7 +796,7 @@ Exemplo:
 
 `GET /api/v1/support-locations/nearby?latitude=-23.5505&longitude=-46.6333`
 
-### 10.2. Resposta de Sucesso
+### 12.2. Resposta de Sucesso
 
 A API busca candidatas em um raio de 5 km em linha reta da localização informada e retorna até cinco delegacias, ordenadas pela menor distância a pé pelas ruas. Se encontrar menos de cinco candidatas nesse raio, retorna os locais disponíveis.
 
@@ -704,7 +816,7 @@ A API busca candidatas em um raio de 5 km em linha reta da localização informa
 
 `id` identifica o elemento no OpenStreetMap. `name` pode ser `null` se o OSM não fornecer um nome. `distance_m` é a distância a pé, em metros, calculada pelo OpenRouteService.
 
-### 10.3. Fontes de Dados, Erros e Privacidade
+### 12.3. Fontes de Dados, Erros e Privacidade
 
 - As delegacias são consultadas no OpenStreetMap por meio da Overpass API.
 - Se a Overpass estiver indisponível, o backend tenta usar locais de apoio guardados no cache. (AINDA NÃO DISPONÍVEL)
