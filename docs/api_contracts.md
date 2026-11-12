@@ -778,3 +778,50 @@ Revisão final: migração `0008_risk_geography_indexes` otimiza vizinhança sem
 rotas/payloads. Recorte backend preparado para integração; dados SSP reais ainda
 exigem validação de licença/precisão e carga administrativa. Severidade/pontuação
 não são retornadas. Limitações e medição sintética em `risk_zones/README.md`.
+
+## 12. Consulta de Delegacias Próximas — RF12
+
+### 12.1. Requisição
+
+`GET /api/v1/support-locations/nearby`
+
+Parâmetros obrigatórios na query string:
+
+| Parâmetro | Tipo | Validação |
+|---|---|---|
+| `latitude` | Número | Entre -90 e 90 |
+| `longitude` | Número | Entre -180 e 180 |
+
+Exemplo:
+
+`GET /api/v1/support-locations/nearby?latitude=-23.5505&longitude=-46.6333`
+
+### 12.2. Resposta de Sucesso
+
+A API busca candidatas em um raio de 5 km em linha reta da localização informada e retorna até cinco delegacias, ordenadas pela menor distância a pé pelas ruas. Se encontrar menos de cinco candidatas nesse raio, retorna os locais disponíveis.
+
+```json
+{
+  "data": [
+    {
+      "id": "node/12345",
+      "name": "Delegacia de exemplo",
+      "latitude": -23.5505,
+      "longitude": -46.6333,
+      "distance_m": 420
+    }
+  ]
+}
+```
+
+`id` identifica o elemento no OpenStreetMap. `name` pode ser `null` se o OSM não fornecer um nome. `distance_m` é a distância a pé, em metros, calculada pelo OpenRouteService.
+
+### 12.3. Fontes de Dados, Erros e Privacidade
+
+- As delegacias são consultadas no OpenStreetMap por meio da Overpass API.
+- Se a Overpass estiver indisponível, o backend tenta usar locais de apoio guardados no cache. (AINDA NÃO DISPONÍVEL)
+- O OpenRouteService calcula as distâncias a pé dos locais até a posição informada.
+- Se não houver locais em cache quando a Overpass falhar, ou se não for possível calcular as distâncias, a API retorna `503 EXTERNAL_SERVICE_UNAVAILABLE`.
+- Coordenadas ausentes ou inválidas retornam `422 VALIDATION_ERROR`.
+- As respostas de erro seguem o envelope padronizado definido neste documento.
+- A localização da usuária é processada durante a requisição e não é armazenada.
