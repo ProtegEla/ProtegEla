@@ -23,6 +23,7 @@ from sqlalchemy import (
     Uuid,
     false,
     func,
+    text,
 )
 from sqlalchemy import Enum as SQLAlchemyEnum
 from sqlalchemy.orm import Mapped, mapped_column
@@ -53,7 +54,15 @@ class Report(Base):
     """Incidente individual; sua criação não implica classificação de risco."""
 
     __tablename__ = "reports"
-    __table_args__ = (Index("ix_reports_device_created", "device_id", "created_at"),)
+    __table_args__ = (
+        Index("ix_reports_device_created", "device_id", "created_at"),
+        Index(
+            "ix_reports_visible_geography",
+            text("(location::geography)"),
+            postgresql_using="gist",
+            postgresql_where=text("NOT is_hidden"),
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     author_id: Mapped[UUID] = mapped_column(

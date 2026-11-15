@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     # APIs Externas
     OVERPASS_API_URL: str = "https://overpass-api.de/api/interpreter"
     OVERPASS_TIMEOUT_SECONDS: int = 10
-    OPENROUTESERVICE_API_URL: str = "https://api.openrouteservice.org"
+    OPENROUTESERVICE_API_URL: str = "https://api.heigit.org/openrouteservice"
     OPENROUTESERVICE_API_KEY: str = "mock_dev_key"
     OPENROUTESERVICE_TIMEOUT_SECONDS: int = 8
 

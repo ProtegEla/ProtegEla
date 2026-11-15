@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 from geoalchemy2.shape import from_shape, to_shape
 from shapely.geometry import Point
-from sqlalchemy import func, select, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import (
@@ -141,6 +141,59 @@ class ReportService:
         if report is None:
             raise EntityNotFoundException("Relato não encontrado.")
         return report
+
+    async def _owned(self, report_id: UUID, author_id: UUID) -> Report:
+        report = await self.require_visible(report_id, lock=True)
+        if report.author_id != author_id:
+            raise ForbiddenException("Apenas a autora pode alterar o relato.")
+        return report
+
+    async def edit(
+        self, report_id: UUID, data: CreateReportData, *, author_id: UUID
+    ) -> Report:
+        self._validate(data)
+        description = self._normalize_text(data.description, 1000, "description")
+        reference = self._normalize_text(
+            data.address_reference, 255, "location.address_reference"
+        )
+        try:
+            report = await self._owned(report_id, author_id)
+            report.location = from_shape(
+                Point(data.longitude, data.latitude), srid=4326
+            )
+            report.category = ReportCategory(data.category)
+            report.description = description
+            report.address_reference = reference
+            report.incident_date = data.incident_date
+            report.incident_period = IncidentPeriod(data.incident_period)
+            report.incident_time = data.incident_time
+            report.is_anonymous = data.is_anonymous
+            await self.session.flush()
+            await self.session.refresh(report)
+            await self.session.commit()
+            return report
+        except Exception:
+            await self.session.rollback()
+            raise
+
+    async def delete(self, report_id: UUID, *, author_id: UUID) -> None:
+        from src.modules.comments.models import Comment
+
+        try:
+            report = await self._owned(report_id, author_id)
+            await self.session.execute(
+                delete(Comment).where(Comment.report_id == report_id)
+            )
+            await self.session.execute(
+                delete(ReportInteraction).where(
+                    ReportInteraction.report_id == report_id
+                )
+            )
+            await self.session.delete(report)
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            raise
 
     async def confirm(self, report_id: UUID, *, user_id: UUID) -> None:
         await self._register_interaction(
