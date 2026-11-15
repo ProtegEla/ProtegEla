@@ -194,7 +194,9 @@ async def test_hidden_and_missing_reports_hide_all_comments(
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("credential", [None, "invalid", "missing_account", "refresh"])
+@pytest.mark.parametrize(
+    "credential", [None, "device_only", "invalid", "missing_account", "refresh"]
+)
 async def test_mutations_require_real_access_identity(
     async_client, context, credential
 ):
@@ -205,7 +207,11 @@ async def test_mutations_require_real_access_identity(
         "missing_account": create_access_token(str(uuid4())),
         "refresh": create_refresh_token(str(users[0].id)),
     }.get(credential)
-    request_headers = {"Authorization": f"Bearer {token}"} if token else {}
+    request_headers = {}
+    if credential == "device_only":
+        request_headers["X-Device-Id"] = str(uuid4())
+    elif token:
+        request_headers["Authorization"] = f"Bearer {token}"
     base = url(reports[0])
     for method, path, kwargs in (
         ("post", base, {"json": {"text": "novo"}}),

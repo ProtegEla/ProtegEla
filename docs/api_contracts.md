@@ -92,6 +92,7 @@ Em ambientes com proxy reverso, a identificação correta do IP de origem depend
     X-Device-Id: 550e8400-e29b-41d4-a716-446655440000
     ```
   - Esse identificador é utilizado pelo servidor para aplicar rate limits de proteção e associar denúncias comunitárias temporárias contra spam (RN06).
+  - `X-Device-Id` não autentica a usuária e não substitui o cabeçalho `Authorization`. Consultas públicas continuam acessíveis sem JWT; operações privadas, como escrever comentários, adicionar relatos e consultar dados da própria conta, exigem um access token válido e uma conta existente.
 
 ---
 

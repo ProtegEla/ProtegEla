@@ -124,6 +124,7 @@ async def test_activity_hidden_filter_and_validation(async_client, test_db):
         ).status_code == 422
     for request_headers in (
         {},
+        {"X-Device-Id": str(uuid4())},
         {"Authorization": "Bearer invalid"},
         {"Authorization": "Bearer " + create_access_token(str(uuid4()))},
     ):
