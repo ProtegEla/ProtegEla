@@ -69,6 +69,7 @@ Cada módulo funcional possui uma divisão direta de responsabilidades em arquiv
 | **`emergency`** | Acionamento de pânico e lista de telefones úteis (180, 190). | RF10, RF14, RNF09 |
 | **`support_locations`** | Delegacias e hospitais próximos via Overpass API (OSM). | RF12, RNF10 |
 | **`notifications`** | Alertas de proximidade de áreas de risco e avisos locais. | RF13, RNF04 |
+| **`safety_guides`** | Orientações e dicas de segurança em textos educativos por tópico. | RF11 |
 
 ### 2.3. Núcleo Compartilhado (`backend/src/core/`)
 

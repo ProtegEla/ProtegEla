@@ -177,6 +177,8 @@ Toda falha (códigos HTTP 4xx e 5xx) deve obrigatoriamente retornar uma estrutur
 | **support_locations**| `GET` | `/api/v1/support-locations/nearby` | Delegacias e hospitais próximos via OSM/Overpass (RF12) | Proposta em discussão |
 | **notifications** | `POST` | `/api/v1/notifications/proximity-alert` | Verificação de entrada em zona de risco (RF13) | Proposta em discussão |
 | **core** | `GET` | `/api/v1/health` | Healthcheck de integridade do backend e banco | Aprovado |
+| **safety_guides** | `GET` | `/api/v1/safety-guides` | Lista de orientações e dicas de segurança (RF11) | Implementado |
+| **safety_guides** | `GET` | `/api/v1/safety-guides/{slug}` | Texto completo de uma orientação (RF11) | Implementado |
 
 ---
 
@@ -667,8 +669,20 @@ A remoção apaga texto e autoria, mantendo `is_deleted=true` e a posição com 
 
 Erros padronizados: 401 para credenciais inválidas/conta inexistente; 403 para edição/remoção alheia; 404 para relato ocultado/inexistente, comentário inexistente/removido ou pai de outro relato; 422 para entrada inválida. Mutações bloqueiam o relato na mesma ordem das denúncias para coordenar ocultação concorrente. Migração: `0006_create_comments`.
 
+## 10. Orientações de Segurança — RF11
 
-## 10. Histórico de atividade própria — RF04
+Rotas públicas sob `/api/v1/safety-guides`, sem necessidade de access token (acesso sem login, RF04). Somente leitura, o conteúdo é mantido por migrações do Alembic.
+
+| Método | Sufixo | Entrada | Sucesso |
+| --- | --- | --- | --- |
+| GET | — | — | 200: `{data: [resumo]}` |
+| GET | `/{slug}` | `slug`: `^[a-z0-9-]{1,80}$` | 200: `{data: orientacao}` |
+
+O resumo contém `id`, `slug`, `title`, `summary` e `position`. A orientação completa contém esses campos mais `content` e `updated_at` (UTC). A lista é ordenada por `position, id` e não é paginada.
+
+Erros padronizados: 404 `NOT_FOUND` para slug inexistente; 422 `VALIDATION_ERROR` para slug fora do padrão. Migração: `0007_create_safety_guides`.
+
+## 11. Histórico de atividade própria — RF04
 
 `GET /api/v1/users/me/activity` exige access token e conta existente. Aceita
 `page` (padrão 1, mínimo 1) e `page_size` (padrão 20, entre 1 e 100).
@@ -705,7 +719,7 @@ Mutações bloqueiam a linha do relato, coordenando edição/exclusão com comen
 e denúncias. Não há restauração ou reexibição de conteúdo ocultado.
 Não há alteração de tabelas ou necessidade de migração nesta entrega.
 
-## 11. Pontos de perigo no mapa — RF06
+## 12. Pontos de perigo no mapa — RF06
 
 Consultas públicas, sem token. Geometrias GeoJSON em WGS84, com coordenadas
 `[longitude, latitude]`. Relatos ocultados e dados pessoais não são expostos.
@@ -779,9 +793,9 @@ rotas/payloads. Recorte backend preparado para integração; dados SSP reais ain
 exigem validação de licença/precisão e carga administrativa. Severidade/pontuação
 não são retornadas. Limitações e medição sintética em `risk_zones/README.md`.
 
-## 12. Consulta de Delegacias Próximas — RF12
+## 13. Consulta de Delegacias Próximas — RF12
 
-### 12.1. Requisição
+### 13.1. Requisição
 
 `GET /api/v1/support-locations/nearby`
 
@@ -796,7 +810,7 @@ Exemplo:
 
 `GET /api/v1/support-locations/nearby?latitude=-23.5505&longitude=-46.6333`
 
-### 12.2. Resposta de Sucesso
+### 13.2. Resposta de Sucesso
 
 A API busca candidatas em um raio de 5 km em linha reta da localização informada e retorna até cinco delegacias, ordenadas pela menor distância a pé pelas ruas. Se encontrar menos de cinco candidatas nesse raio, retorna os locais disponíveis.
 
@@ -816,7 +830,7 @@ A API busca candidatas em um raio de 5 km em linha reta da localização informa
 
 `id` identifica o elemento no OpenStreetMap. `name` pode ser `null` se o OSM não fornecer um nome. `distance_m` é a distância a pé, em metros, calculada pelo OpenRouteService.
 
-### 12.3. Fontes de Dados, Erros e Privacidade
+### 13.3. Fontes de Dados, Erros e Privacidade
 
 - As delegacias são consultadas no OpenStreetMap por meio da Overpass API.
 - Se a Overpass estiver indisponível, o backend tenta usar locais de apoio guardados no cache. (AINDA NÃO DISPONÍVEL)
