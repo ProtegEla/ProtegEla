@@ -173,6 +173,7 @@ Toda falha (códigos HTTP 4xx e 5xx) deve obrigatoriamente retornar uma estrutur
 | **comments** | `POST` | `/api/v1/reports/{id}/comments` | Inserção de comentário | Implementado |
 | **risk_zones** | `GET` | `/api/v1/risk-zones` | Zonas de risco poligonais agregadas (RN03) | Proposta em discussão |
 | **routes** | `POST` | `/api/v1/routes/calculate` | Cálculo de rota segura desviando de áreas de risco (RF15) | Proposta em discussão |
+| **emergency** | `GET` | `/api/v1/emergency/call-target` | Telefone para ligação do botão de emergência (RF14) | Implementado |
 | **emergency** | `POST` | `/api/v1/emergency/panic` | Registro de acionamento do botão de pânico (RF14) | Proposta em discussão |
 | **emergency** | `GET` | `/api/v1/emergency/useful-numbers`| Lista de telefones de utilidade pública (RF10) | Proposta em discussão |
 | **support_locations**| `GET` | `/api/v1/support-locations/nearby` | Delegacias e hospitais próximos via OSM/Overpass (RF12) | Proposta em discussão |
@@ -840,3 +841,26 @@ A API busca candidatas em um raio de 5 km em linha reta da localização informa
 - Coordenadas ausentes ou inválidas retornam `422 VALIDATION_ERROR`.
 - As respostas de erro seguem o envelope padronizado definido neste documento.
 - A localização da usuária é processada durante a requisição e não é armazenada.
+
+## 14. Telefone do Botão de Emergência — RF14
+
+`GET /api/v1/emergency/call-target` exige access token e conta existente. A
+identidade é obtida exclusivamente do token; a rota não recebe `user_id`.
+
+Se a conta possuir contato de emergência principal, retorna `200` com somente o
+telefone descriptografado necessário para a ligação:
+
+```json
+{
+  "data": {
+    "phone": "11987654321"
+  }
+}
+```
+
+Quando não houver contato principal, `phone` será `"190"`. Credencial ausente,
+inválida, expirada, refresh token ou conta inexistente retorna `401 UNAUTHORIZED`.
+Respostas bem-sucedidas utilizam `Cache-Control: no-store`.
+Falhas de banco ou descriptografia retornam erro interno e não são interpretadas
+como ausência de contato. O backend não realiza a ligação, não registra o
+acionamento e não recebe localização neste endpoint.
