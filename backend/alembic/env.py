@@ -14,6 +14,7 @@ from src.core.config import settings
 from src.core.database import Base
 
 from src.modules.users.models import User, EmergencyContact
+from src.modules.auth.models import LoginAttempt
 
 config = context.config
 

@@ -29,6 +29,61 @@ Este documento estabelece as diretrizes de integração entre as aplicações cl
     ```
   - **Refresh Token**: Longa duração (7 dias), utilizado exclusivamente no endpoint `/api/v1/auth/refresh`.
 
+#### Endpoint de Login — RF02
+
+**Rota:** `POST /api/v1/auth/login`
+
+**Descrição:** Autentica uma usuária cadastrada utilizando e-mail e senha.
+
+**Requisição:**
+
+```json
+{
+  "email": "maria@email.com",
+  "password": "Senha@123"
+}
+```
+
+**Resposta de sucesso — HTTP 200:**
+
+```json
+{
+  "access_token": "<jwt_access_token>",
+  "refresh_token": "<jwt_refresh_token>",
+  "token_type": "bearer"
+}
+```
+
+O `access_token` deve ser utilizado para acessar rotas protegidas. O `refresh_token` é destinado à renovação da autenticação, por meio de um endpoint de refresh ainda não implementado.
+
+**Credenciais inválidas — HTTP 401:**
+
+Quando o e-mail não está cadastrado ou a senha está incorreta, o servidor retorna o erro padronizado:
+
+- Código: `UNAUTHORIZED`
+- Mensagem: `credenciais inválidas`
+
+A mesma mensagem é utilizada nos dois casos para não revelar se um e-mail está cadastrado.
+
+**Limite de tentativas — HTTP 429:**
+
+O servidor permite até cinco tentativas inválidas consecutivas por IP em uma janela de dez minutos. Após a quinta falha, o cliente fica temporariamente bloqueado por dez minutos. Tentativas adicionais durante o bloqueio retornam:
+
+- Código: `RATE_LIMIT_EXCEEDED`
+- Mensagem: `Muitas tentativas de login. Tente novamente mais tarde.`
+
+Uma autenticação bem-sucedida reinicia o contador de tentativas inválidas.
+
+**Segurança:**
+
+As senhas são verificadas utilizando o mecanismo de hash configurado no backend. O controle de tentativas é persistido no PostgreSQL, utilizando um identificador derivado do IP por HMAC, sem armazenar diretamente o endereço IP nessa tabela.
+
+**Limitações atuais:**
+
+O rate limiting do login utiliza o IP identificado pelo servidor. O controle individual por `X-Device-Id` não está implementado neste endpoint.
+
+Em ambientes com proxy reverso, a identificação correta do IP de origem depende da configuração de proxies confiáveis.
+
 ### 2.2. Acesso Sem Login (RF04)
 - Para usuárias que optam por usar o mapa, rotas e pânico sem autenticação:
   - O aplicativo gera um identificador local pseudo-anônimo (UUID) persistido no cliente.
@@ -102,7 +157,7 @@ Toda falha (códigos HTTP 4xx e 5xx) deve obrigatoriamente retornar uma estrutur
 | Módulo | Método | Rota | Descrição | Status |
 | :--- | :--- | :--- | :--- | :--- |
 | **auth** | `POST` | `/api/v1/auth/register` | Cadastro de usuária e contatos de emergência (RF01) | Proposta em discussão |
-| **auth** | `POST` | `/api/v1/auth/login` | Autenticação e emissão de tokens (RF02) | Proposta em discussão |
+| **auth** | `POST` | `/api/v1/auth/login` | Autenticação, emissão de tokens e limite de tentativas (RF02/RN06) | Implementado no backend; pendente de validação da equipe |
 | **auth** | `POST` | `/api/v1/auth/refresh` | Renovação de Access Token | Proposta em discussão |
 | **auth** | `POST` | `/api/v1/auth/forgot-password` | Solicitação de recuperação de senha (RF16) | Proposta em discussão |
 | **users** | `GET` | `/api/v1/users/me` | Dados do perfil da usuária logada | Proposta em discussão |

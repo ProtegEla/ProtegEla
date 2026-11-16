@@ -1,14 +1,21 @@
-from fastapi import APIRouter, Depends, status
-from sqlalchemy.ext.asyncio import AsyncSession
-
 import re
 import uuid
 from typing import List
-
 from pydantic import BaseModel, Field, field_validator
-
+from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.database import get_db_session
-from src.modules.auth.service import register_user
+from src.modules.auth.service import login_with_rate_limit, register_user
+from fastapi import APIRouter, Depends, Request, status
+
+class LoginRequest(BaseModel):
+    email: str = Field(min_length=1)
+    password: str = Field(min_length=1, repr=False)
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
@@ -66,3 +73,26 @@ async def register(data: RegisterRequest, session: AsyncSession = Depends(get_db
     """Cadastro de usuária e contatos de emergência."""
     user = await register_user(session, username=data.username, email=data.email, password=data.password, emergency_contacts=[c.model_dump() for c in data.emergency_contacts])
     return RegisterResponse(id=user.id, username=user.username, email=data.email)
+
+@router.post(
+    "/login",
+    response_model=LoginResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def login(
+    data: LoginRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+):
+    """Autentica uma usuária com proteção contra tentativas excessivas."""
+
+    client_ip = request.client.host if request.client else "unknown"
+
+    tokens = await login_with_rate_limit(
+        session,
+        email=data.email,
+        password=data.password,
+        client_ip=client_ip,
+    )
+
+    return LoginResponse(**tokens)
