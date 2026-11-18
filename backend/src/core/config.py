@@ -25,6 +25,15 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
+    # Recuperação de senha por e-mail
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM_EMAIL: str = ""
+    SMTP_STARTTLS: bool = True
+    PASSWORD_RESET_URL: str = ""
+
     # Criptografia de Campos em Repouso (LGPD: e-mail, telefones de contatos)
     FIELD_ENCRYPTION_KEY: str = "dGhpcy1pcy1hLWRldmVsb3BtZW50LWtleS1mb3ItZmVybmV0PQ=="
 
