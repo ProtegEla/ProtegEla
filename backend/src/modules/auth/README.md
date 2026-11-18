@@ -11,3 +11,4 @@
 - `router.py`: Rotas FastAPI `/api/v1/auth/*` e esquemas Pydantic de entrada/saída.
 - `service.py`: Regras de negócio, geração e verificação de tokens e orquestração de autenticação.
 - `models.py`: Modelos SQLAlchemy para sessões ou tokens de recuperação de senha.
+

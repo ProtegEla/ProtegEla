@@ -1,10 +1,19 @@
-"""
-Serviço de regras de negócio do módulo Emergency.
+"""Regras de negócio do módulo de emergência."""
 
-Responsabilidades futuras (a serem implementadas pelo responsável do módulo):
-- Consulta de lista de telefones de utilidade pública (RF10).
-- Registro e auditoria de acionamento do botão de pânico (RF14).
-"""
+from uuid import UUID
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.modules.users.service import get_primary_emergency_phone
+
+POLICE_PHONE = "190"
+
+
+async def resolve_call_target(session: AsyncSession, user_id: UUID) -> str:
+    """Seleciona o contato principal da conta ou a Polícia Militar."""
+    phone = await get_primary_emergency_phone(session, user_id)
+    return phone if phone is not None else POLICE_PHONE
+
 
 def list_useful_numbers() -> list[dict[str, str]]:
     """Retorna os números públicos de segurança e emergência."""

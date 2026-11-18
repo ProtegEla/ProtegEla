@@ -7,7 +7,8 @@ from src.core.config import settings
 # Engine assíncrona do SQLAlchemy conectada ao PostgreSQL via asyncpg
 engine = create_async_engine(
     settings.DATABASE_URL,
-    echo=settings.DEBUG,
+    echo=False,
+    hide_parameters=True,
     future=True,
     pool_pre_ping=True,
 )
