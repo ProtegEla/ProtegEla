@@ -21,12 +21,7 @@ _fernet: Optional[Fernet] = None
 def get_fernet() -> Fernet:
     global _fernet
     if _fernet is None:
-        try:
-            _fernet = Fernet(settings.FIELD_ENCRYPTION_KEY.encode())
-        except Exception:
-            # Fallback seguro em desenvolvimento caso a chave não seja informada
-            key = Fernet.generate_key()
-            _fernet = Fernet(key)
+        _fernet = Fernet(settings.FIELD_ENCRYPTION_KEY.encode())
     return _fernet
 
 
