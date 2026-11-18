@@ -907,3 +907,113 @@ configurar logs de acesso/proxy/HTTP para omitir query strings e credenciais.
 Sucesso usa `Cache-Control: no-store`. Validar cobertura, cota da chave e
 atribuição dos dados com a equipe antes de produção. Nominatim público não
 permite autocomplete; Overpass permanece na consulta de locais de apoio.
+
+## 16. Rotas para pedestres — RF15
+
+`POST /api/v1/routes/calculate` é público, JSON, sem JWT ou dispositivo obrigatório.
+
+```json
+{
+  "origin": {"latitude": -23.55052, "longitude": -46.633308},
+  "destination": {"latitude": -23.5614, "longitude": -46.6559},
+  "stops": []
+}
+```
+
+Origem/destino obrigatórios; até 3 paradas, padrão `[]`, na ordem informada.
+Coordenadas numéricas finitas nos intervalos latitude [-90,90], longitude [-180,180];
+rejeitar campos extras e pontos consecutivos iguais. GPS e conversão de endereços
+em coordenadas pertencem ao cliente. Não otimizar a ordem das paradas.
+
+### Resposta e comparação
+
+`200 {data: {routes, comparison, attribution}}`, com `Cache-Control: no-store`.
+De 1 a 3 trajetos distintos para pedestres, ordenados por duração e geometria
+para desempate, preservando a rápida e a de menor exposição quando distintas.
+
+| Campo de cada trajeto | Formato |
+| --- | --- |
+| `id` | UUID v4 temporário, sem persistência ou endpoint de recuperação. |
+| `geometry` | GeoJSON LineString WGS84, pares `[longitude, latitude]`. |
+| `distance_m`, `duration_s` | Números finitos positivos; metros e segundos. |
+| `legs` | Um trecho por par consecutivo de pontos, com `distance_m`, `duration_s`, `steps`. |
+| `steps` | `instruction` (texto em português), `distance_m`, `duration_s` não negativos e `way_points` (dois índices inclusivos na geometria completa). |
+| `risk` | `status`: `evaluated`, `no_mapped_data`, `unavailable`; `exposure_score`: número finito não negativo apenas em `evaluated`, senão null. |
+
+Totais somam os trechos; junções não duplicam vértices. `attribution` preserva
+o texto de atribuição do provedor para exibição no aplicativo.
+
+| Campo de `comparison` | Semântica |
+| --- | --- |
+| `fastest_route_id` | Menor duração entre as candidatas, sem garantia de ótimo global. |
+| `lower_risk_route_id` | Menor exposição, somente se todas forem avaliadas e houver melhora estrita sobre a rápida; senão null. Desempate por duração e geometria. |
+| `extra_duration_percent` | `100 * (duration_lower_risk / duration_fastest - 1)`; null sem comparação. |
+| `exceeds_30_percent` | `duration_lower_risk > 1.30 * duration_fastest`, sem arredondamento; null sem comparação. |
+| `status` | `lower_risk_available`, `no_lower_risk_alternative`, `no_mapped_data`, `risk_unavailable`. |
+
+RN07 mantém ambas as opções quando o desvio excede 30%; exatamente 30% não alerta.
+Uma única candidata ou empate de exposição não inventa alternativa de menor risco.
+Falha parcial de avaliação impede recomendação. Ausência de dados não significa
+segurança; não são expostos níveis ou probabilidade de crime.
+
+### Integrações e limites
+
+ORS `foot-walking/geojson`, preferência `fastest`, instruções `pt-br`, configuração
+`OPENROUTESERVICE_*` existente. Alternativas só aceitam dois pontos: até 4 chamadas
+por cálculo, 3 alternativas por trecho e 81 combinações em memória, todas avaliadas
+antes de selecionar 3. Junções desconectadas são descartadas, sem ligações artificiais.
+Distâncias diretas somadas até 50 km (422); candidatas até 100 km caminhados;
+sem itinerário contínuo dentro do limite, 503. Sem retries.
+
+ORS tem orçamento global `OPENROUTESERVICE_TIMEOUT_SECONDS` (padrão 8 s);
+avaliação de risco acrescenta até 5 s. `ROUTE_REQUESTS_PER_MINUTE` (padrão 10)
+limita cálculos por processo numa janela móvel de 60 s, incluindo falhas externas;
+reinicia com o processo. Múltiplos workers exigem limite agregado no gateway.
+
+Erros no envelope global: `422 VALIDATION_ERROR`; `422 ROUTE_NOT_FOUND` quando
+o provedor confirma ausência de caminho/ajuste de algum ponto; `429 RATE_LIMIT_EXCEEDED`
+para limite local; `503 EXTERNAL_SERVICE_UNAVAILABLE` para timeout, chave/cota externa,
+resposta inválida ou falta de composição contínua. Nunca retornar itinerário incompleto.
+Falhas de banco/Overpass/associação preservam os trajetos com risco `unavailable`.
+
+### Métrica aprovada — avaliação incremental
+
+`risk_zones` calcula elegibilidade/pontuação; `routes` calcula exposição e compara.
+O agrupamento do mapa RF06 permanece inalterado. Snapshot único de relatos visíveis,
+votos e SSP ativo; mesma referência temporal em `America/Sao_Paulo` para as candidatas.
+
+- Grupo elegível: algum relato com 3 confirmações distintas nos últimos 6 meses,
+  ou presença de SSP ativo. Não somar votos de relatos diferentes para atingir 3.
+- Peso comunitário: `(1 + confirmações_recentes) × fator_temporal` por relato;
+  fator 1 até 6 meses sem atividade no grupo, 0,5 depois. Atividade é criação,
+  confirmação ou denúncia posterior; denúncias não somam pontos.
+- SSP: peso 2 até 12 meses desde o incidente; depois, piso histórico 0,5.
+  Datas futuras não contribuem. Meses civis com limites inclusivos.
+- Exposição: soma de `metros percorridos no trecho × pontuação do trecho`.
+  Somar contribuições dos grupos, uma vez por grupo/via; travessias repetidas
+  contam novamente. Não normalizar pelo comprimento total.
+
+Uma consulta Overpass obtém até 2.000 ways caminháveis da caixa das candidatas,
+com margem aproximada de 50 m, área máxima 100 km². Avaliação restrita à região
+WGS84 [-47,5,-24,5,-45,5,-22,5]; até 10.000 incidentes globais para agrupamento,
+antes do recorte. Exceder limites deixa risco indisponível, sem truncamento.
+
+PostGIS usa projeção local SIRGAS 2000 / UTM 23S (31983) e comprimentos no elipsoide.
+Incidente associa-se à way mais próxima até 20 m, com diferença maior que 1 m para
+a segunda; cada segmento ORS deve caber inteiramente na tolerância de 3 m de uma
+única way. Ambiguidades, lacunas, pontes, túneis, ambientes internos ou camadas não
+zero impedem recomendação. O peso aplica-se à way inteira: ways longas podem ampliar
+a área penalizada. Essa aproximação geométrica não confirma identidade no grafo ORS;
+validar com dados reais. Falta de incidentes válidos na caixa dá `no_mapped_data`;
+registros existentes sem grupos elegíveis podem dar exposição zero, sem garantir segurança.
+
+Atendimento parcial à RN04 aprovado: comparar candidatas, sem bloquear polígonos
+ou modificar pesos no motor. O [ORS público não oferece custom models](https://giscience.github.io/openrouteservice/api-reference/endpoints/directions/custom-models).
+Trajetos/consultas/vias são processados em memória; ORS recebe os pontos e Overpass
+a caixa geográfica, sem identidade pessoal. Não registrar corpos ou credenciais.
+Sem migração ou histórico de GPS. Início da navegação, cache offline e notificação
+persistente são responsabilidades do aplicativo, sem endpoint de rastreamento.
+
+Revisão final: 100 testes passaram, incluindo PostGIS real e regressão de zonas
+e endereços; ORS/Overpass simulados. Chave ORS real, cobertura/precisão OSM e
+integração mobile ainda exigem validação antes da entrega completa do RF15.
