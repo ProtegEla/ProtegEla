@@ -84,6 +84,19 @@ O rate limiting do login utiliza o IP identificado pelo servidor. O controle ind
 
 Em ambientes com proxy reverso, a identificação correta do IP de origem depende da configuração de proxies confiáveis.
 
+#### Recuperação de senha (RF16)
+
+As duas rotas aceitam JSON e são públicas.
+
+| Rota | Corpo da requisição | Respostas |
+| --- | --- | --- |
+| `POST /api/v1/auth/forgot-password` | `{"email":"usuaria@example.com"}` | `200` para uma solicitação válida e `422` para corpo inválido. |
+| `POST /api/v1/auth/reset-password` | `{"token":"<token recebido por e-mail>","new_password":"NovaSenha@123"}` | `200` após redefinir a senha, `401` para token inválido, expirado ou já usado e `422` para corpo inválido ou senha fora da política RN08. |
+
+O `200` de `forgot-password` retorna `{"message":"Se o e-mail estiver cadastrado, você receberá um link para redefinir sua senha."}`, inclusive para e-mails desconhecidos e em caso de falha no envio. Para confirmar a entrega, confira a caixa de entrada do destinatário.
+
+O link usa a `PASSWORD_RESET_URL` configurada no backend com o parâmetro `token`. O token expira em 15 minutos, é de uso único e só tem seu hash armazenado no banco. Uma nova solicitação invalida os tokens anteriores da conta. A nova senha deve ter de 8 a 128 caracteres, com letra maiúscula, letra minúscula, número e caractere especial. Após a troca, a resposta é `{"message":"Senha redefinida com sucesso."}`.
+
 ### 2.2. Acesso Sem Login (RF04)
 - Para usuárias que optam por usar o mapa, rotas e pânico sem autenticação:
   - O aplicativo gera um identificador local pseudo-anônimo (UUID) persistido no cliente.
@@ -160,7 +173,8 @@ Toda falha (códigos HTTP 4xx e 5xx) deve obrigatoriamente retornar uma estrutur
 | **auth** | `POST` | `/api/v1/auth/register` | Cadastro de usuária e contatos de emergência (RF01) | Proposta em discussão |
 | **auth** | `POST` | `/api/v1/auth/login` | Autenticação, emissão de tokens e limite de tentativas (RF02/RN06) | Implementado no backend; pendente de validação da equipe |
 | **auth** | `POST` | `/api/v1/auth/refresh` | Renovação de Access Token | Proposta em discussão |
-| **auth** | `POST` | `/api/v1/auth/forgot-password` | Solicitação de recuperação de senha (RF16) | Proposta em discussão |
+| **auth** | `POST` | `/api/v1/auth/forgot-password` | Solicitação de recuperação de senha (RF16) | Implementado no backend |
+| **auth** | `POST` | `/api/v1/auth/reset-password` | Redefinição de senha com token (RF16) | Implementado no backend |
 | **users** | `GET` | `/api/v1/users/me` | Dados do perfil da usuária logada | Proposta em discussão |
 | **users** | `PUT` | `/api/v1/users/me` | Atualização de perfil e preferências (RF17) | Proposta em discussão |
 | **users** | `DELETE` | `/api/v1/users/me` | Exclusão definitiva de conta e dados (LGPD) | Proposta em discussão |
