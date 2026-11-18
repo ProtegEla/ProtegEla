@@ -26,7 +26,8 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Configura a URL de conexão com base nas configurações da aplicação (sync URL para o Alembic)
-config.set_main_option("sqlalchemy.url", settings.DATABASE_SYNC_URL)
+# O ConfigParser exige %% para preservar os percentuais da URL codificada.
+config.set_main_option("sqlalchemy.url", settings.DATABASE_SYNC_URL.replace("%", "%%"))
 
 target_metadata = Base.metadata
 
