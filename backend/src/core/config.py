@@ -89,6 +89,8 @@ class Settings(BaseSettings):
     OPENROUTESERVICE_API_URL: str = "https://api.heigit.org/openrouteservice"
     OPENROUTESERVICE_API_KEY: str = "mock_dev_key"
     OPENROUTESERVICE_TIMEOUT_SECONDS: int = 8
+    OPENROUTESERVICE_AUTOCOMPLETE_URL: str = "https://api.heigit.org/pelias/v1/autocomplete"
+    ADDRESS_SEARCH_REQUESTS_PER_MINUTE: int = Field(default=60, ge=1)
 
 
 settings = Settings()

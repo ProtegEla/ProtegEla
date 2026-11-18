@@ -878,3 +878,32 @@ Respostas bem-sucedidas utilizam `Cache-Control: no-store`.
 Falhas de banco ou descriptografia retornam erro interno e não são interpretadas
 como ausência de contato. O backend não realiza a ligação, não registra o
 acionamento e não recebe localização neste endpoint.
+
+## 15. Busca de endereços
+
+`GET /api/v1/addresses/suggestions?q=Paulista&limit=5` é público.
+`q`: 3–200 caracteres após remover espaços nas extremidades;
+`limit`: 1–10, padrão 5. Retorno: `200 {data: [{id, label, latitude, longitude}]}`;
+sem resultados: `200 {data: []}`. O cliente centraliza o mapa nas coordenadas
+da sugestão selecionada; recomenda-se debounce de 300 ms e descarte de respostas
+de pesquisas anteriores no frontend.
+
+Fonte: [ORS/Pelias autocomplete](https://giscience.github.io/openrouteservice/v9.10.0/api-reference/endpoints/geocoder/),
+com a chave `OPENROUTESERVICE_API_KEY`, URL `OPENROUTESERVICE_AUTOCOMPLETE_URL`
+e timeout `OPENROUTESERVICE_TIMEOUT_SECONDS`. Restringe ao Brasil e prioriza
+proximidade do centro de São Paulo, sem garantir limite municipal. Preserva a
+relevância do provedor, remove IDs repetidos e limita a lista. IDs são externos
+do Pelias (não UUIDs). A cobertura depende dos dados disponíveis no provedor.
+
+Erros padronizados: `422 VALIDATION_ERROR`, `429 RATE_LIMIT_EXCEEDED` e
+`503 EXTERNAL_SERVICE_UNAVAILABLE` (inclui chave ausente, cota externa esgotada
+ou resposta externa inválida). Limite local: `ADDRESS_SEARCH_REQUESTS_PER_MINUTE`
+(padrão 60), compartilhado entre clientes por processo, janela móvel de 60 s,
+inclusive tentativas externas malsucedidas; reinicia com o processo. Múltiplos
+workers exigem limite agregado no gateway conforme a cota da equipe.
+
+Sem banco, histórico ou logs próprios de consultas. O texto é enviado ao ORS;
+configurar logs de acesso/proxy/HTTP para omitir query strings e credenciais.
+Sucesso usa `Cache-Control: no-store`. Validar cobertura, cota da chave e
+atribuição dos dados com a equipe antes de produção. Nominatim público não
+permite autocomplete; Overpass permanece na consulta de locais de apoio.
