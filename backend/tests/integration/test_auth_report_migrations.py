@@ -239,7 +239,7 @@ def test_merged_history_preserves_data_and_matches_models(migration_database, in
         )
         assert connection.execute(
             text("SELECT version_num FROM alembic_version")
-        ).scalars().all() == ["d54d18c82688"]
+        ).scalars().all() == ["0009_create_history"]
         for table, (record_id, before) in preserved.items():
             after = connection.execute(
                 text(f"SELECT * FROM {table} WHERE id = :id"), {"id": record_id}
@@ -266,3 +266,30 @@ def test_merged_history_preserves_data_and_matches_models(migration_database, in
                 "password_reset_tokens", schema=schema
             )
         )
+
+
+def test_history_migration_roundtrip_and_cascade(migration_database):
+    engine, migrate = migration_database
+    migrate("upgrade", "head")
+    user_id, entry_id = uuid4(), uuid4()
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO users (id,username,email_encrypted,email_lookup,password_hash,created_at,updated_at) VALUES (:id,'history','cipher',:lookup,'hash',now(),now())"
+            ),
+            {"id": user_id, "lookup": user_id.hex},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO history_entries (id,user_id,kind,payload_encrypted) VALUES (:id,:owner,'search','cipher')"
+            ),
+            {"id": entry_id, "owner": user_id},
+        )
+        assert connection.scalar(text("SELECT count(*) FROM history_entries")) == 1
+        connection.execute(text("DELETE FROM users WHERE id=:id"), {"id": user_id})
+        assert connection.scalar(text("SELECT count(*) FROM history_entries")) == 0
+    migrate("downgrade", "d54d18c82688")
+    with engine.connect() as connection:
+        assert not inspect(connection).has_table("history_entries")
+    migrate("upgrade", "head")
+    migrate("check")
