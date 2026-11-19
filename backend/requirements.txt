@@ -1,0 +1,25 @@
+# Dependências de Produção do Back-end ProtegEla (Python 3.11+)
+
+# Web Framework & ASGI
+fastapi>=0.110.0,<1.0.0
+uvicorn[standard]>=0.28.0,<1.0.0
+pydantic>=2.6.0,<3.0.0
+pydantic-settings>=2.2.0,<3.0.0
+
+# Banco de Dados & ORM
+sqlalchemy>=2.0.28,<3.0.0
+asyncpg>=0.29.0,<1.0.0
+psycopg2-binary>=2.9.9,<3.0.0
+alembic>=1.13.1,<2.0.0
+geoalchemy2>=0.14.3,<1.0.0
+shapely>=2.0.3,<3.0.0
+
+# Cliente HTTP Assíncrono (Overpass e OpenRouteService)
+httpx>=0.27.0,<1.0.0
+
+# Segurança, Criptografia e Autenticação
+argon2-cffi>=23.1.0
+passlib[bcrypt]>=1.7.4
+python-jose[cryptography]>=3.3.0
+cryptography>=42.0.5
+python-multipart>=0.0.9

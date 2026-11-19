@@ -1,0 +1,49 @@
+{
+  "expo": {
+    "name": "ProtegEla",
+    "slug": "protegela",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "protegela",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#6A1B9A"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.protegela.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "O ProtegEla utiliza sua localização para exibir o mapa, delegacias próximas e calcular rotas seguras.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "O ProtegEla utiliza a localização em segundo plano para emitir alertas ao se aproximar de zonas de risco durante a navegação (RNF04)."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#6A1B9A"
+      },
+      "package": "com.protegela.app",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "CALL_PHONE"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Permite que o ProtegEla envie alertas de segurança ao se aproximar de áreas perigosas durante o trajeto (RNF04)."
+        }
+      ]
+    ]
+  }
+}
