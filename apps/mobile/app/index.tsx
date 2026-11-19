@@ -385,7 +385,6 @@ export default function HomeScreen() {
       </View>
 
       {/* ================= BARRA INFERIOR PERSISTENTE (SOS SEMPRE ACESSÍVEL) ================= */}
-      {/* ================= BARRA INFERIOR PERSISTENTE (SOS SEMPRE ACESSÍVEL) ================= */}
       <BottomNavigation onPanicPress={() => router.push("/emergency")} />
     </SafeAreaView>
   );
