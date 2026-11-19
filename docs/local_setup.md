@@ -36,6 +36,44 @@ Antes de começar, certifique-se de ter instalado em sua máquina:
      ```
    *(Ou execute o script automatizado `scripts/setup_dev.sh` ou `scripts/setup_dev.ps1`).*
 
+### Chaves do backend
+
+Antes de iniciar o backend, preencha em `backend/.env`:
+
+- `FIELD_ENCRYPTION_KEY`: cifra e-mails e telefones. Deve ser uma chave Fernet válida.
+- `FIELD_LOOKUP_KEY`: segredo não vazio usado para buscar e-mails e identificar tentativas de login.
+- `APP_SECRET_KEY`: assina os tokens JWT. Use um segredo próprio do ambiente.
+
+Em um **ambiente novo**, com as dependências instaladas, gere uma chave Fernet:
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Para criar os outros segredos, execute o comando abaixo uma vez para cada um:
+
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+Copie cada resultado para o campo correspondente do seu arquivo privado. Não envie
+esses valores ao Git nem os publique em issues, mensagens de erro ou capturas de tela.
+Inicie o backend dentro de `backend/`, para que ele leia esse `.env`. Variáveis já
+definidas no terminal têm prioridade sobre o arquivo.
+
+**Se o ambiente já tem dados, conserve as chaves existentes.** Instâncias que usam
+o mesmo banco precisam da mesma chave Fernet e de lookup. Guarde uma cópia segura
+para reutilizar após reiniciar ou reinstalar a aplicação. Perder ou trocar a chave
+Fernet impede a leitura dos campos cifrados com ela. Trocar a chave de lookup impede
+encontrar os e-mails já cadastrados e afeta o controle de tentativas de login. Trocar
+a chave JWT invalida os tokens anteriores; instâncias que aceitam os mesmos tokens
+precisam usar a mesma configuração JWT.
+
+O backend rejeita chaves de criptografia ausentes ou inválidas na inicialização.
+Ele não gera substitutos nem converte dados existentes. Os exemplos não fornecem
+as duas chaves obrigatórias preenchidas. Dados gravados pelo antigo fallback só
+podem ser recuperados com a chave aleatória daquele processo, se ela ainda existir.
+
 ---
 
 ## 3. Configuração do Banco de Dados PostgreSQL Local
@@ -156,6 +194,16 @@ Sem servidor disponível, `alembic upgrade head --sql` e `alembic downgrade 0001
 - **Status dos Módulos**:
   Cada módulo possui rota de status, por exemplo: `http://localhost:8000/api/v1/auth/status`.
 
+#### Teste local de recuperação de senha (RF16)
+
+1. Com o PostgreSQL local ativo e o ambiente virtual ativado, rode `alembic upgrade head` na pasta `backend`.
+2. Preencha as variáveis `SMTP_*` no `backend/.env` usando o [arquivo de exemplo](../backend/.env.example). Se usar o Gmail do projeto, defina `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587` e `SMTP_STARTTLS=true`. Use o Gmail do projeto em `SMTP_USERNAME` e `SMTP_FROM_EMAIL` e a senha de app da conta em `SMTP_PASSWORD`. Guarde as credenciais no `.env` local, fora do Git.
+3. Para testar só o backend, use `PASSWORD_RESET_URL=http://localhost:3000/redefinir-senha` e reinicie o servidor. Quando o frontend for publicado, configure no ambiente do backend a URL HTTPS da tela pública de redefinição.
+4. No Swagger, envie o e-mail de uma conta de teste cadastrada a `POST /api/v1/auth/forgot-password`. A rota retorna `200` com uma mensagem genérica. Confira a caixa de entrada e o spam para confirmar a entrega.
+5. Copie o valor do parâmetro `token` do link recebido e, em até 15 minutos, envie-o com `new_password` a `POST /api/v1/auth/reset-password`. Confira o `200`, faça login com a senha nova e confirme que repetir a redefinição com o mesmo token retorna `401`.
+
+Para rodar os testes automatizados de recuperação a partir de `backend`, use `python -m pytest tests/integration/test_auth_password_reset.py`. Eles simulam o banco e o envio de e-mail.
+
 ### 7.2. Verificação do Front-end Mobile
 - O Metro Bundler do Expo deve compilar sem erros no terminal.
 - A tela inicial deve exibir o cabeçalho "ProtegEla - São Paulo", o placeholder da área do mapa e o botão de pânico visual ("PÂNICO (SOS)").
@@ -165,7 +213,23 @@ Execute a partir da pasta `backend`:
 ```bash
 pytest -v
 ```
-*(Executa a validação da política de senhas RN08 e verificação de saúde da API).*
+Os testes configuram valores fictícios e fixos de Fernet, lookup e JWT antes de
+importar a aplicação. Eles não usam as chaves privadas do seu ambiente. Esses
+valores servem somente para testes e não devem ser copiados para um `.env` real.
+
+Para executar apenas os testes desta correção, sem PostgreSQL:
+
+```bash
+pytest -v tests/unit/test_security_configuration.py tests/unit/test_database_logging.py
+```
+
+Os testes de criptografia iniciam processos separados e verificam a leitura após
+reinício. Os testes de logs usam SQLite em memória. As integrações que precisam
+de PostgreSQL são puladas quando suas variáveis de banco de testes não estão
+configuradas. Use somente um banco descartável, como `protegela_test`; nunca aponte
+essas variáveis para o banco compartilhado da equipe. Nesta correção, a pendência
+dos testes de migração e demais casos dependentes de `TEST_DATABASE_SYNC_URL`
+continua na Issue #38.
 
 Também há testes unitários dos valores persistidos de categoria/período e testes de integração de relatos em `tests/integration/test_report_persistence.py`. Estes últimos exigem `TEST_DATABASE_SYNC_URL` apontando para um banco cujo nome termine em `_test`, com a migração aplicada e PostGIS ativo; sem essa variável, são explicitamente pulados. Cada teste reverte seus próprios dados. Eles verificam coordenadas/SRID, campos opcionais, autoria em publicação anônima e restrições de categoria, período e autoria.
 
