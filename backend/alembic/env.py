@@ -19,6 +19,7 @@ from src.modules.comments.models import Comment  # noqa: F401
 from src.modules.safety_guides.models import SafetyGuide # noqa: F401
 
 from src.modules.risk_zones.models import SSPSafetyRecord  # noqa: F401
+from src.modules.history.models import HistoryEntry  # noqa: F401
 
 config = context.config
 

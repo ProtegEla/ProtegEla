@@ -1041,3 +1041,55 @@ persistente são responsabilidades do aplicativo, sem endpoint de rastreamento.
 Revisão final: 100 testes passaram, incluindo PostGIS real e regressão de zonas
 e endereços; ORS/Overpass simulados. Chave ORS real, cobertura/precisão OSM e
 integração mobile ainda exigem validação antes da entrega completa do RF15.
+
+## 17. Histórico de pesquisas e rotas
+
+Escopo: listas privadas compartilhadas pelas telas de seleção de rota e perfil;
+separadas do histórico de relatos/comentários de `/users/me/activity`.
+Registrar somente a sugestão selecionada ou a rota escolhida, por chamada
+explícita do aplicativo. Autocomplete e cálculo públicos não salvam histórico.
+
+| Recurso | Operações | Dados de entrada |
+| --- | --- | --- |
+| `/api/v1/users/me/search-history` | POST, GET, DELETE | POST: `label` (1–300 caracteres após trim). |
+| `/api/v1/users/me/route-history` | POST, GET, DELETE | POST: `origin_label`, `destination_label`, `stop_labels` (até 3), `distance_m`, `duration_s` positivos e finitos. Labels: 1–300 caracteres após trim. |
+
+Access token e conta existente obrigatórios em todas as operações; identidade
+exclusiva do servidor, sem `user_id` na entrada. POST rejeita campos extras,
+retorna `201 {data: registro}`. Resumo informado pelo cliente não é prova de
+rota calculada pelo ORS; não armazenar classificação de segurança ou ID temporário
+da candidata. Sem coordenadas, geometria, instruções ou trilha de GPS. Para origem
+GPS sem endereço escolhido, usar o rótulo “Localização atual”.
+
+GET: `page=1`, `page_size=20` (1–100), envelope `data`/`meta` existente;
+cada registro inclui UUID v4, campos do resumo e `created_at` UTC do servidor.
+Ordenação `created_at DESC, id DESC`. Cada seleção gera um evento; não registrar
+teclas digitadas. DELETE limpa definitivamente a lista da conta e retorna 204.
+Erros globais: 401 para identidade inválida, 422 para entrada inválida.
+Respostas privadas usam `Cache-Control: no-store`.
+
+Política aprovada: até 100 registros por lista/conta, retenção
+máxima de 30 dias; rótulos cifrados com a infraestrutura Fernet existente.
+Expiração excluída das consultas e limpeza física nas operações e em comando
+periódico de manutenção, cujo agendamento deve fazer parte da implantação.
+Remoção da conta deverá apagar o histórico associado. Navegação em segundo
+plano não acrescenta registros. O histórico permite consultar resumos; reabrir
+ou recalcular um trajeto exigirá nova busca e novo cálculo.
+
+Implementado em `history`, reutilizando autenticação e paginação existentes.
+Migração `0009_create_history`, após `d54d18c82688`: tabela `history_entries`
+com tipo de lista e resumo JSON integralmente cifrado. Bloqueio da conta serializa
+operações concorrentes; registros mais antigos são removidos ao ultrapassar 100.
+Expirações usam o relógio PostgreSQL (limite de 30 dias exclusivo para leitura).
+Exclusão da conta remove os registros via FK `ON DELETE CASCADE`.
+
+Manutenção: executar diariamente, a partir de `backend`,
+`python -m src.modules.history.cleanup` com o ambiente do servidor.
+O comando exclui fisicamente expirados de todas as contas e só informa a contagem;
+sem agendamento, contas inativas dependem da próxima operação para limpeza física.
+Nenhuma mudança no frontend: ele deve chamar POST apenas após a seleção e usar
+os mesmos GETs nas duas telas. Repetir POST cria outro evento (sem idempotência);
+não repetir automaticamente após timeout. Sucesso privado usa `no-store`.
+
+Validação: 132 testes passaram, incluindo PostgreSQL/PostGIS real, concorrência,
+expiração, isolamento entre contas e upgrade/downgrade/check do Alembic.
