@@ -12,10 +12,14 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useAppTheme } from "../../../theme";
 
+import type { CreateReportPayload } from "../reportModel";
+
 export interface CreateReportBottomSheetProps {
   visible: boolean;
   onClose: () => void;
-  onSubmit: (data: any) => void;
+  onSubmit: (
+    data: CreateReportPayload,
+  ) => void | Promise<void>;
   currentAddress?: string;
 }
 
@@ -32,6 +36,8 @@ export const CreateReportBottomSheet: React.FC<CreateReportBottomSheetProps> = (
   const [description, setDescription] = useState("");
   const [period, setPeriod] = useState("noite");
   const [isAnonymous, setIsAnonymous] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
 
   if (!visible) return null;
 
@@ -168,7 +174,21 @@ export const CreateReportBottomSheet: React.FC<CreateReportBottomSheetProps> = (
               <Text style={styles.radioLabel}>Não</Text>
             </TouchableOpacity>
           </View>
-
+          
+          {!!submitError && (
+            <Text
+              accessibilityRole="alert"
+              style={{
+                color: "#FFFFFF",
+                backgroundColor: "rgba(120, 0, 30, 0.35)",
+                padding: 12,
+                borderRadius: 12,
+                marginTop: 16,
+              }}
+            >
+              {submitError}
+            </Text>
+          )}
           {/* Rodapé: Cancelar e Concluir */}
           <View style={styles.actionsRow}>
             <TouchableOpacity style={styles.cancelBtn} onPress={onClose}>
@@ -176,19 +196,43 @@ export const CreateReportBottomSheet: React.FC<CreateReportBottomSheetProps> = (
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.submitBtn}
-              onPress={() => {
-                onSubmit({
-                  category: incidentType,
-                  description,
-                  addressDetail,
-                  period,
-                  isAnonymous,
-                });
+              disabled={isSubmitting}
+              style={[
+                styles.submitBtn,
+                isSubmitting && { opacity: 0.6 },
+              ]}
+              onPress={async () => {
+                if (isSubmitting) return;
+
+                setSubmitError("");
+                setIsSubmitting(true);
+
+                try {
+                  await onSubmit({
+                    category: incidentType,
+                    description,
+                    addressDetail,
+                    period,
+                    isAnonymous,
+                  });
+                } catch (error) {
+                  setSubmitError(
+                    error instanceof Error
+                      ? error.message
+                      : "Não foi possível publicar o relato.",
+                  );
+
+                  setIsSubmitting(false);
+                  return;
+                }
+
+                setIsSubmitting(false);
                 onClose();
               }}
             >
-              <Text style={styles.submitText}>Concluir</Text>
+              <Text style={styles.submitText}>
+                {isSubmitting ? "Publicando…" : "Concluir"}
+              </Text>
             </TouchableOpacity>
           </View>
         </ScrollView>
