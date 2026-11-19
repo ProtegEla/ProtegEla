@@ -7,7 +7,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import make_url
 
 
@@ -161,3 +161,108 @@ def test_comments_migration_preserves_existing_reports(migration_database):
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT count(*) FROM comments")) == 0
         assert connection.scalar(text("SELECT id FROM reports")) == report_id
+
+
+@pytest.mark.parametrize(
+    "initial",
+    [None, "0007_create_safety_guides", "0008_risk_geography_indexes"],
+    ids=["schema_vazio", "head_orientacoes", "head_indices"],
+)
+def test_merged_history_preserves_data_and_matches_models(migration_database, initial):
+    from src.core.database import Base
+
+    engine, migrate = migration_database
+    preserved = {}
+    if initial is not None:
+        migrate("upgrade", initial)
+        user_id = uuid4()
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO users (id, username, email_encrypted, email_lookup, "
+                    "password_hash, created_at, updated_at) VALUES "
+                    "(:id, 'teste', 'email-ficticio-cifrado', :lookup, "
+                    "'hash-ficticio', now(), now())"
+                ),
+                {"id": user_id, "lookup": user_id.hex},
+            )
+            ids = {"users": user_id, "reports": insert_report(connection, user_id)}
+            record_id = uuid4()
+            if initial == "0007_create_safety_guides":
+                connection.execute(
+                    text(
+                        "INSERT INTO safety_guides "
+                        "(id, slug, title, summary, content, position) VALUES "
+                        "(:id, 'orientacao-ficticia', 'Teste', 'Resumo fictício', "
+                        "'Conteúdo fictício a preservar', 99)"
+                    ),
+                    {"id": record_id},
+                )
+                ids["safety_guides"] = record_id
+            else:
+                connection.execute(
+                    text(
+                        "INSERT INTO ssp_safety_records "
+                        "(id, source_key, source_version, is_active, source_url, "
+                        "source_period, file_sha256) VALUES "
+                        "(:id, :source, 1, false, 'https://example.invalid/fixture', "
+                        "'2026', :source)"
+                    ),
+                    {"id": record_id, "source": record_id.hex * 2},
+                )
+                ids["ssp_safety_records"] = record_id
+            for table, record_id in ids.items():
+                preserved[table] = (
+                    record_id,
+                    tuple(
+                        connection.execute(
+                            text(f"SELECT * FROM {table} WHERE id = :id"),
+                            {"id": record_id},
+                        ).one()
+                    ),
+                )
+    else:
+        with engine.connect() as connection:
+            schema = connection.scalar(text("SELECT current_schema()"))
+            assert inspect(connection).get_table_names(schema=schema) == [
+                "alembic_version"
+            ]
+
+    migrate("upgrade", "head")
+    migrate("check")
+    with engine.connect() as connection:
+        schema = connection.scalar(text("SELECT current_schema()"))
+        assert schema.startswith("migration_")
+        inspector = inspect(connection)
+        assert set(Base.metadata.tables) <= set(
+            inspector.get_table_names(schema=schema)
+        )
+        assert connection.execute(
+            text("SELECT version_num FROM alembic_version")
+        ).scalars().all() == ["d54d18c82688"]
+        for table, (record_id, before) in preserved.items():
+            after = connection.execute(
+                text(f"SELECT * FROM {table} WHERE id = :id"), {"id": record_id}
+            ).one()
+            assert tuple(after) == before
+
+        foreign_keys = inspector.get_foreign_keys(
+            "password_reset_tokens", schema=schema
+        )
+        assert any(
+            fk["constrained_columns"] == ["user_id"]
+            and fk["referred_table"] == "users"
+            and fk["referred_columns"] == ["id"]
+            and fk["options"].get("ondelete") == "CASCADE"
+            for fk in foreign_keys
+        )
+        assert any(
+            index["column_names"] == ["user_id"]
+            for index in inspector.get_indexes("password_reset_tokens", schema=schema)
+        )
+        assert any(
+            constraint["column_names"] == ["token_hash"]
+            for constraint in inspector.get_unique_constraints(
+                "password_reset_tokens", schema=schema
+            )
+        )
