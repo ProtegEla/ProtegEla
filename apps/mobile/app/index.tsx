@@ -24,7 +24,6 @@ import { supportLocationsService } from "../src/services/api/supportLocations";
 import { SupportLocation, RiskZoneFeature } from "../src/features/map/types";
 import { Report, ReportCategory } from "../src/types/report";
 import { CreateReportBottomSheet } from "../src/features/reports/components/CreateReportBottomSheet";
-import { EmergencyModal } from "../src/features/emergency/components/EmergencyModal";
 
 /**
  * Tela Principal / Home do ProtegEla (RF03, RF05, RF10, RF12, RF14).
@@ -48,9 +47,6 @@ export default function HomeScreen() {
 
   // Controle do Bottom Sheet de Adicionar Relato
   const [isReportSheetOpen, setIsReportSheetOpen] = useState(false);
-
-  // Controle do Modal do Botão de Emergência
-  const [isEmergencyModalOpen, setIsEmergencyModalOpen] = useState(false);
 
   const handleSaveInlineNickname = () => {
     if (tempNickname.trim().length >= 3) {
@@ -389,17 +385,8 @@ export default function HomeScreen() {
       </View>
 
       {/* ================= BARRA INFERIOR PERSISTENTE (SOS SEMPRE ACESSÍVEL) ================= */}
-      <BottomNavigation
-        onPanicPress={() => setIsEmergencyModalOpen(true)}
-      />
-
-      {/* ================= MODAL DE EMERGÊNCIA (CONFIRMAÇÃO FIGMA) ================= */}
-      <EmergencyModal
-        visible={isEmergencyModalOpen}
-        onClose={() => setIsEmergencyModalOpen(false)}
-        contactName="Gabriela"
-        phoneNumber={process.env.EXPO_PUBLIC_EMERGENCY_PHONE || "11941943128"}
-      />
+      {/* ================= BARRA INFERIOR PERSISTENTE (SOS SEMPRE ACESSÍVEL) ================= */}
+      <BottomNavigation onPanicPress={() => router.push("/emergency")} />
     </SafeAreaView>
   );
 }

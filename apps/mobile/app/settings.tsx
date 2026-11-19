@@ -13,7 +13,6 @@ import { Ionicons } from "@expo/vector-icons";
 import { useAppTheme } from "../src/theme";
 import { Input, Button, BottomNavigation } from "../src/components/ui";
 import { useAuth } from "../src/features/auth/AuthContext";
-import { EmergencyModal } from "../src/features/emergency/components/EmergencyModal";
 
 /**
  * Tela de Configurações do Usuário.
@@ -250,15 +249,7 @@ export default function SettingsScreen() {
 
       {/* ── BottomNavigation PERSISTENTE (regra de ouro: SOS sempre visível) ── */}
       <BottomNavigation
-        onPanicPress={() => setIsEmergencyModalOpen(true)}
-      />
-
-      {/* Modal de Emergência */}
-      <EmergencyModal
-        visible={isEmergencyModalOpen}
-        onClose={() => setIsEmergencyModalOpen(false)}
-        contactName={primaryContact.name || "Contato 1"}
-        phoneNumber={primaryContact.phone || defaultPhone}
+        onPanicPress={() => router.push("/emergency")}
       />
     </SafeAreaView>
   );
