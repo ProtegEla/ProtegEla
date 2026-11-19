@@ -293,7 +293,7 @@ export default function HomeScreen() {
       </View>
 
       {/* ================= BARRA INFERIOR PERSISTENTE (SOS SEMPRE ACESSÍVEL) ================= */}
-      <BottomNavigation />
+      <BottomNavigation onTabPress={(tab) => router.push(tab)} />
     </SafeAreaView>
   );
 }
