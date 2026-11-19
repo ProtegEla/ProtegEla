@@ -291,9 +291,6 @@ export default function HomeScreen() {
           </View>
         </Modal>
       </View>
-
-      {/* ================= BARRA INFERIOR PERSISTENTE (SOS SEMPRE ACESSÍVEL) ================= */}
-      <BottomNavigation />
     </SafeAreaView>
   );
 }

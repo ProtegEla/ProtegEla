@@ -1,13 +1,17 @@
 import React, { useEffect } from "react";
-import { Stack } from "expo-router";
+import { router, Stack, usePathname } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { StyleSheet, View, Platform } from "react-native";
 import { ThemeProvider, useAppTheme } from "../src/theme";
 import { AuthProvider } from "../src/features/auth/AuthContext";
+import { BottomNavigation } from "@/components/ui/BottomNavigation";
 
 function InnerLayout() {
   const { colors, isDark } = useAppTheme();
+  const pathname = usePathname();
+
+  const showBottomNavigation = !["/login", "/register"].includes(pathname);
 
   useEffect(() => {
     if (Platform.OS === "web" && typeof document !== "undefined") {
@@ -58,6 +62,10 @@ function InnerLayout() {
         <Stack.Screen name="login" />
         <Stack.Screen name="register" />
       </Stack>
+
+      {showBottomNavigation && (
+        <BottomNavigation onTabPress={(tab) => router.push(tab)} />
+      )}
     </View>
   );
 }
