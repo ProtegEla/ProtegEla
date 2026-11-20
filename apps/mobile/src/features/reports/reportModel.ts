@@ -13,6 +13,7 @@ export interface ReportComment {
   text: string;
   createdAt: string;
   parentId?: string;
+  isMine?: boolean;
 }
 
 export interface DangerReport extends RiskMapReport {
@@ -33,6 +34,9 @@ export interface CreateReportPayload {
   addressDetail: string;
   period: string;
   isAnonymous: boolean;
+
+  location: Coordinates;
+  address: string;
 }
 
 export const PERIOD_LABELS: Record<string, string> = {

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { Coordinates } from "../map/types";
 
@@ -42,6 +42,27 @@ export function useHomeReports({
   const [notice, setNotice] = useState(
     "Toque em uma área vazia do mapa para escolher o local de um relato.",
   );
+
+  const [mapCenter, setMapCenter] =
+  useState<Coordinates>(currentCoords);
+
+  const [cameraRevision, setCameraRevision] =
+    useState(0);
+
+  useEffect(() => {
+    setMapCenter({
+      latitude: currentCoords.latitude,
+      longitude: currentCoords.longitude,
+    });
+  }, [
+    currentCoords.latitude,
+    currentCoords.longitude,
+  ]);
+
+  function recenterMap() {
+    setMapCenter({ ...currentCoords });
+    setCameraRevision((previous) => previous + 1);
+  }
 
   const sequence = useRef(0);
 
@@ -108,13 +129,13 @@ export function useHomeReports({
   function createReport(data: CreateReportPayload) {
     if (!creationSession) {
       throw new Error(
-        "Selecione novamente o local do relato.",
+        "Abra novamente o formulário para publicar.",
       );
     }
 
-    if (!isValidCoordinates(creationSession.location)) {
+    if (!isValidCoordinates(data.location)) {
       throw new Error(
-        "A localização selecionada não é válida.",
+        "Selecione uma localização válida no mapa.",
       );
     }
 
@@ -132,21 +153,28 @@ export function useHomeReports({
       );
     }
 
+    const location = { ...data.location };
+
     const report: DangerReport = {
       id: nextId(),
       category: data.category,
       description,
 
-      location: { ...creationSession.location },
-      address: creationSession.address,
-      addressDetail: data.addressDetail.trim(),
+      // Agora usa o endereço escolhido DENTRO do formulário.
+      location,
+      address:
+        data.address.trim() ||
+        `Local no mapa · ${coordinatesLabel(location)}`,
 
+      addressDetail: data.addressDetail.trim(),
       period: data.period,
+
       isAnonymous: data.isAnonymous,
-      author: data.isAnonymous ? "Anônima" : authorName,
+      author: data.isAnonymous
+        ? "Anônima"
+        : authorName,
 
       createdAt: new Date().toISOString(),
-
       confirmations_count: 0,
       confirmedByMe: false,
       comments: [],
@@ -154,11 +182,13 @@ export function useHomeReports({
 
     setReports((previous) => [...previous, report]);
 
-    setNotice(
-      "Relato adicionado ao mapa. Toque no marcador para abrir os detalhes.",
-    );
+    setSelectedLocation(location);
+    setMapCenter(location);
+    setCameraRevision((previous) => previous + 1);
 
-    // O CreateReportBottomSheet fecha após o envio.
+    setNotice(
+      "Relato publicado no local selecionado.",
+    );
   }
 
   function toggleConfirmation(id: string) {
@@ -194,6 +224,7 @@ export function useHomeReports({
       text: normalized,
       createdAt: new Date().toISOString(),
       parentId,
+      isMine: true,
     };
 
     setReports((previous) =>
@@ -287,5 +318,9 @@ export function useHomeReports({
     toggleConfirmation,
     addComment,
     loadExamples,
+
+    mapCenter,
+    cameraRevision,
+    recenterMap,
   };
 }

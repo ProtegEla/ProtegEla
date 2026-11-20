@@ -25,6 +25,11 @@ import {
   type RiskMapReport,
 } from "../../reports/reportModel";
 
+import {
+  createReportMarkerIcon,
+  createSelectedLocationIcon,
+} from "../../reports/mapMarkerIcons";
+
 export type MapTileStyle =
   | "clean"
   | "clean_dark"
@@ -54,6 +59,7 @@ export interface RiskMapProps<
   selectedLocation?: Coordinates | null;
 
   interactive?: boolean;
+  cameraRevision?: number;
 }
 
 const TILE_PROVIDERS: Record<
@@ -225,6 +231,7 @@ export function RiskMap<
   onSelectSupportLocation,
   onMapPress,
   interactive = true,
+  cameraRevision = 0,
 }: RiskMapProps<TReport>) {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -365,7 +372,13 @@ export function RiskMap<
       zoom,
       { duration: 0.8 },
     );
-  }, [ready, center.latitude, center.longitude, zoom]);
+  }, [
+    ready,
+    center.latitude,
+    center.longitude,
+    zoom,
+    cameraRevision,
+  ]);
 
   // Estilo dos tiles.
   useEffect(() => {
@@ -435,18 +448,16 @@ export function RiskMap<
       selectedLocation &&
       isValidCoordinates(selectedLocation)
     ) {
-      L.circleMarker(
+      L.marker(
         [
           selectedLocation.latitude,
           selectedLocation.longitude,
         ],
         {
-          radius: 11,
-          color: "#FFFFFF",
-          weight: 3,
-          fillColor: "#0F766E",
-          fillOpacity: 1,
+          icon: createSelectedLocationIcon(L),
           interactive: false,
+          keyboard: false,
+          zIndexOffset: 1000,
         },
       ).addTo(layer);
     }
@@ -462,11 +473,7 @@ export function RiskMap<
           report.location.longitude,
         ],
         {
-          icon: createMarkerIcon(
-            L,
-            category.color,
-            category.symbol,
-          ),
+          icon: createReportMarkerIcon(L, report.category),
           title: report.category,
           keyboard: interactive,
           interactive,

@@ -16,11 +16,10 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
-  DangerReport,
-  ReportComment,
-  PERIOD_LABELS,
   elapsed,
   getCategoryStyle,
+  type DangerReport,
+  type ReportComment,
 } from "../reportModel";
 
 type Props = {
@@ -32,6 +31,13 @@ type Props = {
     text: string,
     parentId?: string,
   ) => void;
+};
+
+const PERIOD_DESCRIPTIONS: Record<string, string> = {
+  manha: "Período da manhã",
+  tarde: "Período da tarde",
+  noite: "Período da noite",
+  madrugada: "Período da madrugada",
 };
 
 export function DangerPointDetailsModal({
@@ -59,6 +65,12 @@ export function DangerPointDetailsModal({
   if (!report) return null;
 
   const category = getCategoryStyle(report.category);
+
+  const badgeColor =
+    report.category === "Violência"
+      ? "#EC2027"
+      : category.color;
+
   const comments = report.comments.filter(
     (comment) => !comment.parentId,
   );
@@ -92,13 +104,17 @@ export function DangerPointDetailsModal({
       onRequestClose={onClose}
     >
       <KeyboardAvoidingView
-        style={s.keyboard}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={{ flex: 1 }}
+        behavior={
+          Platform.OS === "ios" ? "padding" : "height"
+        }
       >
         <View
           style={[
             s.overlay,
-            { paddingTop: Math.max(insets.top, 16) },
+            {
+              paddingTop: Math.max(insets.top, 12),
+            },
           ]}
         >
           <Pressable
@@ -108,19 +124,19 @@ export function DangerPointDetailsModal({
             style={StyleSheet.absoluteFill}
           />
 
-          <View accessibilityViewIsModal style={s.sheet}>
-            <View style={s.handle} />
-
-            <View style={s.header}>
-              <View style={{ flex: 1 }}>
-                <Text
-                  accessibilityRole="header"
-                  style={s.title}
-                >
-                  Ponto de perigo
-                </Text>
-                <Text style={s.subtitle}>
-                  Relato compartilhado pela comunidade
+          <View
+            accessibilityViewIsModal
+            style={s.sheet}
+          >
+            <View style={s.topRow}>
+              <View
+                style={[
+                  s.badge,
+                  { backgroundColor: badgeColor },
+                ]}
+              >
+                <Text style={s.badgeText}>
+                  {report.category}
                 </Text>
               </View>
 
@@ -131,9 +147,9 @@ export function DangerPointDetailsModal({
                 style={s.close}
               >
                 <Ionicons
-                  name="close"
-                  size={22}
-                  color="#593582"
+                  name="close-outline"
+                  size={28}
+                  color="#535968"
                 />
               </Pressable>
             </View>
@@ -143,163 +159,151 @@ export function DangerPointDetailsModal({
               contentContainerStyle={s.content}
               keyboardShouldPersistTaps="handled"
             >
-              <View style={s.summary}>
-                <View
-                  style={[
-                    s.badge,
-                    { backgroundColor: category.background },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      s.badgeText,
-                      { color: category.color },
-                    ]}
-                  >
-                    {report.category}
-                  </Text>
-                </View>
+              <Text
+                accessibilityRole="header"
+                style={s.address}
+              >
+                {report.address}
+              </Text>
 
-                <Text style={s.address}>
-                  {report.address}
+              {!!report.addressDetail && (
+                <Text style={s.addressDetail}>
+                  ({report.addressDetail})
                 </Text>
+              )}
 
-                {!!report.addressDetail && (
-                  <Text style={s.addressDetail}>
-                    {report.addressDetail}
-                  </Text>
-                )}
-
-                <View style={s.divider} />
-
-                <Text style={s.label}>O que aconteceu</Text>
+              <View style={s.descriptionSection}>
+                <Text style={s.sectionLabel}>
+                  Descrição
+                </Text>
 
                 <Text style={s.description}>
-                  {report.description ||
-                    "Sem descrição adicional."}
-                </Text>
-
-                <View style={s.metadata}>
-                  <View style={s.metaItem}>
-                    <Ionicons
-                      name="calendar-outline"
-                      size={16}
-                      color="#8055B5"
-                    />
-                    <Text style={s.metaText}>
-                      {elapsed(report.createdAt)}
-                    </Text>
-                  </View>
-
-                  {!!report.period && (
-                    <View style={s.metaItem}>
-                      <Ionicons
-                        name="time-outline"
-                        size={16}
-                        color="#8055B5"
-                      />
-                      <Text style={s.metaText}>
-                        {PERIOD_LABELS[report.period] ??
-                          report.period}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-
-                <Text style={s.byline}>
-                  Relatado por{" "}
-                  {report.isAnonymous
-                    ? "Anônima"
-                    : report.author}
+                  {report.description
+                    ? `“${report.description}”`
+                    : "Sem descrição adicional."}
                 </Text>
               </View>
 
-              <View style={s.confirmBox}>
-                <Text style={s.confirmTitle}>
+              <View style={s.metadata}>
+                <View style={s.metaItem}>
+                  <Ionicons
+                    name="time-outline"
+                    size={20}
+                    color="#8554BB"
+                  />
+                  <Text style={s.metaText}>
+                    {elapsed(report.createdAt)}
+                  </Text>
+                </View>
+
+                {!!report.period && (
+                  <View
+                    style={[
+                      s.metaItem,
+                      { flex: 1 },
+                    ]}
+                  >
+                    <Ionicons
+                      name="moon"
+                      size={19}
+                      color="#8554BB"
+                    />
+                    <Text
+                      style={[
+                        s.metaText,
+                        { flex: 1 },
+                      ]}
+                    >
+                      {PERIOD_DESCRIPTIONS[
+                        report.period
+                      ] ?? report.period}
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  report.confirmedByMe
+                    ? "Desfazer minha confirmação"
+                    : "Confirmar este relato"
+                }
+                accessibilityState={{
+                  selected: report.confirmedByMe,
+                }}
+                onPress={() =>
+                  onToggleConfirmation(report.id)
+                }
+                style={s.confirmation}
+              >
+                <Ionicons
+                  name={
+                    report.confirmedByMe
+                      ? "thumbs-up"
+                      : "thumbs-up-outline"
+                  }
+                  size={17}
+                  color="#8554BB"
+                />
+
+                <Text style={s.metaText}>
                   {report.confirmations_count}{" "}
                   {report.confirmations_count === 1
                     ? "confirmação"
-                    : "confirmações"}{" "}
-                  da comunidade
+                    : "confirmações"}
+                  {report.confirmedByMe
+                    ? " · você confirmou"
+                    : ""}
                 </Text>
+              </Pressable>
 
-                <Text style={s.help}>
-                  Confirme apenas se você conhece essa
-                  situação.
-                </Text>
-
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={
-                    report.confirmedByMe
-                      ? "Desfazer minha confirmação"
-                      : "Confirmar este relato"
-                  }
-                  onPress={() =>
-                    onToggleConfirmation(report.id)
-                  }
-                  style={({ pressed }) => [
-                    s.confirmButton,
-                    pressed && { opacity: 0.7 },
-                  ]}
-                >
-                  <Ionicons
-                    name={
-                      report.confirmedByMe
-                        ? "checkmark-circle"
-                        : "checkmark-circle-outline"
-                    }
-                    size={20}
-                    color="#593582"
-                  />
-
-                  <Text style={s.confirmButtonText}>
-                    {report.confirmedByMe
-                      ? "Confirmado por você · desfazer"
-                      : "Também confirmo este relato"}
-                  </Text>
-                </Pressable>
-              </View>
-
-              <View style={s.sectionHeader}>
-                <Text style={s.sectionTitle}>
-                  Comentários
-                </Text>
-                <Text style={s.count}>
-                  {report.comments.length}
-                </Text>
-              </View>
+              <Text
+                accessibilityRole="header"
+                style={s.commentsTitle}
+              >
+                Comentários
+              </Text>
 
               {!comments.length && (
-                <Text style={s.help}>
-                  Ainda não há comentários. Você pode iniciar
-                  a conversa.
+                <Text style={s.emptyText}>
+                  Ainda não há comentários.
                 </Text>
               )}
 
               {comments.map((comment) => {
-                const replies = report.comments.filter(
-                  (item) => item.parentId === comment.id,
-                );
+                const replies =
+                  report.comments.filter(
+                    (item) =>
+                      item.parentId === comment.id,
+                  );
+
+                const isMine =
+                  comment.isMine ??
+                  comment.author === "Você";
+
+                const showReplies =
+                  expanded[comment.id] ?? true;
 
                 return (
                   <View
                     key={comment.id}
-                    style={s.commentCard}
+                    style={[
+                      s.commentCard,
+                      isMine && s.myCommentCard,
+                    ]}
                   >
                     <View style={s.authorRow}>
-                      <View style={s.avatar}>
-                        <Text style={s.avatarText}>
-                          {comment.author.charAt(0)}
-                        </Text>
-                      </View>
-
                       <Text style={s.author}>
-                        {comment.author}
+                        {isMine
+                          ? "Você"
+                          : comment.author}
                       </Text>
 
                       <Text style={s.timestamp}>
-                        {elapsed(comment.createdAt)}
+                        {elapsed(
+                          comment.createdAt,
+                        ).toLowerCase()}
                       </Text>
                     </View>
 
@@ -307,63 +311,88 @@ export function DangerPointDetailsModal({
                       {comment.text}
                     </Text>
 
-                    <View style={s.commentActions}>
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={`Responder a ${comment.author}`}
-                        onPress={() => setReplyTo(comment)}
-                        style={s.textButton}
-                      >
-                        <Text style={s.actionText}>
-                          Responder
-                        </Text>
-                      </Pressable>
-
-                      {!!replies.length && (
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityState={{
-                            expanded:
-                              !!expanded[comment.id],
-                          }}
-                          onPress={() =>
-                            setExpanded((previous) => ({
-                              ...previous,
-                              [comment.id]:
-                                !previous[comment.id],
-                            }))
-                          }
-                          style={s.textButton}
-                        >
-                          <Text style={s.actionText}>
-                            {expanded[comment.id]
-                              ? "Ocultar respostas"
-                              : `Ver respostas (${replies.length})`}
-                          </Text>
-                        </Pressable>
-                      )}
-                    </View>
-
-                    {expanded[comment.id] &&
+                    {!!replies.length &&
+                      showReplies &&
                       replies.map((reply) => (
                         <View
                           key={reply.id}
                           style={s.reply}
                         >
-                          <View style={s.authorRow}>
+                          <View style={s.replyHeading}>
+                            <Ionicons
+                              name="return-down-forward"
+                              size={17}
+                              color="#87909D"
+                            />
+
                             <Text style={s.author}>
-                              {reply.author}
+                              {reply.isMine
+                                ? "Você"
+                                : reply.author}
                             </Text>
-                            <Text style={s.timestamp}>
-                              {elapsed(reply.createdAt)}
+
+                            <Text
+                              style={s.timestamp}
+                            >
+                              {elapsed(
+                                reply.createdAt,
+                              ).toLowerCase()}
                             </Text>
                           </View>
 
-                          <Text style={s.commentText}>
+                          <Text
+                            style={s.replyText}
+                          >
                             {reply.text}
                           </Text>
                         </View>
                       ))}
+
+                    <View
+                      style={s.commentActions}
+                    >
+                      {!!replies.length && (
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityState={{
+                            expanded: showReplies,
+                          }}
+                          onPress={() =>
+                            setExpanded(
+                              (previous) => ({
+                                ...previous,
+                                [comment.id]:
+                                  !showReplies,
+                              }),
+                            )
+                          }
+                          style={s.textButton}
+                        >
+                          <Text
+                            style={s.actionText}
+                          >
+                            {showReplies
+                              ? "Ocultar respostas"
+                              : `Ver respostas (${replies.length})`}
+                          </Text>
+                        </Pressable>
+                      )}
+
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`Responder a ${comment.author}`}
+                        onPress={() =>
+                          setReplyTo(comment)
+                        }
+                        style={s.textButton}
+                      >
+                        <Text
+                          style={s.actionText}
+                        >
+                          Responder
+                        </Text>
+                      </Pressable>
+                    </View>
                   </View>
                 );
               })}
@@ -375,27 +404,32 @@ export function DangerPointDetailsModal({
                 {
                   paddingBottom: Math.max(
                     insets.bottom,
-                    16,
+                    22,
                   ),
                 },
               ]}
             >
               {replyTo && (
                 <View style={s.replyBanner}>
-                  <Text style={s.replyBannerText}>
-                    Respondendo a {replyTo.author}
+                  <Text
+                    style={s.replyBannerText}
+                  >
+                    Respondendo a{" "}
+                    {replyTo.author}
                   </Text>
 
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel="Cancelar resposta"
-                    onPress={() => setReplyTo(null)}
+                    onPress={() =>
+                      setReplyTo(null)
+                    }
                     style={s.cancelReply}
                   >
                     <Ionicons
                       name="close"
-                      size={18}
-                      color="#593582"
+                      size={17}
+                      color="#8554BB"
                     />
                   </Pressable>
                 </View>
@@ -412,10 +446,10 @@ export function DangerPointDetailsModal({
                   onChangeText={setMessage}
                   placeholder={
                     replyTo
-                      ? "Escreva sua resposta…"
-                      : "Compartilhe um comentário…"
+                      ? "Adicionar resposta..."
+                      : "Adicionar comentário..."
                   }
-                  placeholderTextColor="#64748B"
+                  placeholderTextColor="#81758E"
                   multiline
                   maxLength={500}
                   style={s.input}
@@ -430,14 +464,19 @@ export function DangerPointDetailsModal({
                   }
                   disabled={!message.trim()}
                   onPress={sendComment}
-                  style={[
+                  style={({ pressed }) => [
                     s.send,
-                    !message.trim() && { opacity: 0.4 },
+                    !message.trim() && {
+                      opacity: 0.65,
+                    },
+                    pressed && {
+                      opacity: 0.8,
+                    },
                   ]}
                 >
                   <Ionicons
                     name="arrow-up"
-                    size={23}
+                    size={26}
                     color="#FFFFFF"
                   />
                 </Pressable>
@@ -451,201 +490,161 @@ export function DangerPointDetailsModal({
 }
 
 const s = StyleSheet.create({
-  keyboard: { flex: 1 },
   overlay: {
     flex: 1,
     justifyContent: "flex-end",
     alignItems: "center",
-    backgroundColor: "rgba(24,16,36,0.48)",
+    backgroundColor: "rgba(25, 18, 35, 0.35)",
   },
   sheet: {
     width: "100%",
-    maxWidth: 620,
+    maxWidth: 430,
     maxHeight: "94%",
-    backgroundColor: "#FAF8FD",
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
+    backgroundColor: "#EAE4F2",
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
     overflow: "hidden",
   },
-  handle: {
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: "#D6CBDD",
-    alignSelf: "center",
-    marginTop: 10,
-  },
-  header: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    padding: 22,
-    paddingBottom: 16,
-    gap: 12,
-  },
-  title: {
-    color: "#1E293B",
-    fontSize: 24,
-    fontWeight: "700",
-  },
-  subtitle: {
-    color: "#64748B",
-    marginTop: 6,
-    fontSize: 13,
-    lineHeight: 20,
-  },
-  close: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: "#F0EAF7",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  content: {
+  topRow: {
+    paddingTop: 12,
     paddingHorizontal: 22,
-    paddingBottom: 24,
-    gap: 18,
-  },
-  summary: {
-    padding: 20,
-    backgroundColor: "#FFFFFF",
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: "#DDD5E8",
-    gap: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
   badge: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 11,
-    paddingVertical: 6,
-    borderRadius: 9,
+    paddingHorizontal: 18,
+    paddingVertical: 3,
+    borderRadius: 999,
   },
-  badgeText: { fontSize: 12, fontWeight: "700" },
+  badgeText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "500",
+  },
+  close: {
+    width: 40,
+    height: 40,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: -8,
+  },
+  content: {
+    paddingHorizontal: 26,
+    paddingBottom: 4,
+  },
   address: {
-    color: "#593582",
-    fontSize: 23,
-    lineHeight: 30,
-    fontWeight: "700",
+    color: "#8554BB",
+    fontSize: 28,
+    lineHeight: 33,
+    fontWeight: "600",
+    letterSpacing: -0.4,
+    marginTop: 3,
   },
   addressDetail: {
-    color: "#64748B",
-    fontSize: 14,
-    lineHeight: 21,
+    color: "#8554BB",
+    fontSize: 17,
+    lineHeight: 24,
+    fontWeight: "500",
+    marginTop: 4,
   },
-  divider: {
-    height: 1,
-    backgroundColor: "#E9E2F0",
-    marginVertical: 6,
+  descriptionSection: {
+    marginTop: 32,
   },
-  label: {
-    color: "#1E293B",
-    fontWeight: "700",
-    fontSize: 14,
+  sectionLabel: {
+    color: "#8554BB",
+    fontSize: 16,
+    fontWeight: "600",
   },
   description: {
-    color: "#1E293B",
-    fontSize: 15,
-    lineHeight: 24,
+    color: "#465064",
+    fontSize: 14,
+    lineHeight: 22,
+    marginTop: 8,
   },
   metadata: {
     flexDirection: "row",
+    alignItems: "flex-start",
     flexWrap: "wrap",
-    gap: 16,
-    marginTop: 5,
+    columnGap: 24,
+    rowGap: 10,
+    marginTop: 18,
   },
   metaItem: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  metaText: { color: "#593582", fontSize: 12 },
-  byline: { color: "#64748B", fontSize: 12 },
-  confirmBox: {
-    padding: 18,
-    borderRadius: 20,
-    backgroundColor: "#F0EAF7",
-    gap: 10,
-  },
-  confirmTitle: {
-    color: "#593582",
-    fontWeight: "700",
-    fontSize: 14,
-  },
-  help: {
-    color: "#64748B",
-    fontSize: 13,
-    lineHeight: 20,
-  },
-  confirmButton: {
-    minHeight: 48,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: "flex-start",
     gap: 8,
   },
-  confirmButtonText: {
-    flexShrink: 1,
-    color: "#593582",
-    fontSize: 13,
-    fontWeight: "700",
-    textAlign: "center",
+  metaText: {
+    color: "#8554BB",
+    fontSize: 14,
+    lineHeight: 20,
   },
-  sectionHeader: {
+  confirmation: {
+    minHeight: 36,
     flexDirection: "row",
     alignItems: "center",
-    gap: 9,
+    gap: 10,
+    marginTop: 3,
   },
-  sectionTitle: {
-    color: "#1E293B",
-    fontSize: 18,
-    fontWeight: "700",
+  commentsTitle: {
+    color: "#A17ACB",
+    fontSize: 17,
+    fontWeight: "600",
+    marginTop: 24,
+    marginBottom: 12,
   },
-  count: {
-    color: "#593582",
-    backgroundColor: "#F0EAF7",
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-    borderRadius: 8,
-    fontSize: 12,
-    fontWeight: "700",
+  emptyText: {
+    color: "#81758E",
+    fontSize: 13,
+    marginBottom: 14,
   },
   commentCard: {
-    padding: 16,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: "#DDD5E8",
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "#F8FAFC",
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 6,
+    marginBottom: 12,
+  },
+  myCommentCard: {
+    backgroundColor: "#CEC0DF",
   },
   authorRow: {
     flexDirection: "row",
     alignItems: "center",
     flexWrap: "wrap",
-    gap: 8,
-  },
-  avatar: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: "#F0EAF7",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  avatarText: {
-    color: "#593582",
-    fontSize: 12,
-    fontWeight: "700",
+    gap: 14,
   },
   author: {
-    color: "#1E293B",
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  timestamp: { color: "#64748B", fontSize: 11 },
-  commentText: {
-    color: "#1E293B",
+    color: "#4B5568",
     fontSize: 14,
-    lineHeight: 22,
-    marginTop: 8,
+  },
+  timestamp: {
+    color: "#87909D",
+    fontSize: 11,
+  },
+  commentText: {
+    color: "#465064",
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 5,
+  },
+  reply: {
+    marginTop: 12,
+  },
+  replyHeading: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+  replyText: {
+    color: "#465064",
+    fontSize: 12,
+    lineHeight: 18,
+    marginLeft: 23,
+    marginTop: 3,
   },
   commentActions: {
     flexDirection: "row",
@@ -653,70 +652,55 @@ const s = StyleSheet.create({
     columnGap: 16,
   },
   textButton: {
-    minHeight: 44,
+    minHeight: 36,
     justifyContent: "center",
   },
   actionText: {
-    color: "#593582",
+    color: "#4B5568",
     fontSize: 12,
-    fontWeight: "600",
-  },
-  reply: {
-    borderLeftWidth: 2,
-    borderLeftColor: "#D7C6EB",
-    paddingLeft: 14,
-    marginTop: 10,
-    paddingVertical: 4,
   },
   footer: {
-    paddingHorizontal: 20,
-    paddingTop: 14,
-    borderTopWidth: 1,
-    borderTopColor: "#DDD5E8",
-    backgroundColor: "#FFFFFF",
-    gap: 10,
-  },
-  replyBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingLeft: 10,
-    borderRadius: 12,
-    backgroundColor: "#F0EAF7",
-  },
-  replyBannerText: {
-    flex: 1,
-    color: "#593582",
-    fontSize: 12,
-  },
-  cancelReply: {
-    width: 44,
-    height: 44,
-    alignItems: "center",
-    justifyContent: "center",
+    paddingHorizontal: 26,
+    paddingTop: 8,
+    gap: 8,
+    backgroundColor: "#EAE4F2",
   },
   composer: {
     flexDirection: "row",
     alignItems: "flex-end",
-    gap: 10,
+    gap: 12,
   },
   input: {
     flex: 1,
-    minHeight: 50,
-    maxHeight: 110,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#DDD5E8",
-    backgroundColor: "#F8FAFC",
-    color: "#1E293B",
-    fontSize: 14,
+    minHeight: 40,
+    maxHeight: 100,
+    borderRadius: 11,
+    backgroundColor: "#CEC0DF",
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    color: "#465064",
+    fontSize: 12,
   },
   send: {
-    width: 50,
-    height: 50,
-    borderRadius: 15,
-    backgroundColor: "#593582",
+    width: 40,
+    height: 40,
+    borderRadius: 11,
+    backgroundColor: "#9D78C9",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  replyBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  replyBannerText: {
+    flex: 1,
+    color: "#8554BB",
+    fontSize: 12,
+  },
+  cancelReply: {
+    width: 36,
+    height: 36,
     alignItems: "center",
     justifyContent: "center",
   },

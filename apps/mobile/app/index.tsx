@@ -155,15 +155,14 @@ export default function HomeScreen() {
           ]}
         >
           <RiskMap<DangerReport>
-            center={currentCoords}
+            center={reportFlow.mapCenter}
+            cameraRevision={reportFlow.cameraRevision}
             userLocation={location}
             mapStyle={mapStyle}
             supportLocations={supportLocations}
             zoom={16}
-
             reports={reportFlow.reports}
             selectedLocation={reportFlow.selectedLocation}
-
             onMapPress={reportFlow.selectLocation}
             onSelectReport={reportFlow.selectReport}
           />
@@ -280,7 +279,10 @@ export default function HomeScreen() {
               { backgroundColor: isDark ? "#241B38" : "#EDE9F5" },
             ]}
             activeOpacity={0.8}
-            onPress={() => refreshLocation()}
+            onPress={() => {
+              reportFlow.recenterMap();
+              void refreshLocation();
+            }}
             accessibilityLabel="Recentralizar mapa"
           >
             <MaterialCommunityIcons
@@ -442,7 +444,13 @@ export default function HomeScreen() {
           <CreateReportBottomSheet
             key={reportFlow.creationSession.id}
             visible
-            currentAddress={reportFlow.creationSession.address}
+            initialLocation={
+              reportFlow.creationSession.location
+            }
+            currentAddress={
+              reportFlow.creationSession.address
+            }
+            mapStyle={mapStyle}
             onClose={reportFlow.closeCreateReport}
             onSubmit={reportFlow.createReport}
           />
