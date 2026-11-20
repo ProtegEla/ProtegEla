@@ -21,9 +21,16 @@ import {
   DEFAULT_SP_COORDINATES,
 } from "../src/features/map/hooks/useCurrentLocation";
 import { supportLocationsService } from "../src/services/api/supportLocations";
-import { SupportLocation, RiskZoneFeature } from "../src/features/map/types";
-import { Report, ReportCategory } from "../src/types/report";
+import type {
+  SupportLocation,
+} from "../src/features/map/types";
 import { CreateReportBottomSheet } from "../src/features/reports/components/CreateReportBottomSheet";
+
+import { useHomeReports } from "../src/features/reports/useHomeReports";
+
+import { DangerPointDetailsModal } from "../src/features/reports/components/DangerPointDetailsModal";
+
+import type { DangerReport } from "../src/features/reports/reportModel";
 
 /**
  * Tela Principal / Home do ProtegEla (RF03, RF05, RF10, RF12, RF14).
@@ -45,9 +52,6 @@ export default function HomeScreen() {
   // Controle da gaveta/painel lateral
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
-  // Controle do Bottom Sheet de Adicionar Relato
-  const [isReportSheetOpen, setIsReportSheetOpen] = useState(false);
-
   const handleSaveInlineNickname = () => {
     if (tempNickname.trim().length >= 3) {
       updateNickname(tempNickname.trim());
@@ -63,6 +67,12 @@ export default function HomeScreen() {
   // Localização atual da usuária (Web e Celular)
   const { location, refreshLocation } = useCurrentLocation();
   const currentCoords = location || DEFAULT_SP_COORDINATES;
+
+  const reportFlow = useHomeReports({
+    currentCoords,
+    hasUserLocation: Boolean(location),
+    authorName: user?.nickname || "Você",
+  });
 
   // Estilo do mapa reativo ao tema da aplicação (claro vs escuro)
   const mapStyle: MapTileStyle = isDark ? "clean_dark" : "clean";
@@ -144,12 +154,18 @@ export default function HomeScreen() {
             },
           ]}
         >
-          <RiskMap
+          <RiskMap<DangerReport>
             center={currentCoords}
             userLocation={location}
             mapStyle={mapStyle}
             supportLocations={supportLocations}
             zoom={16}
+
+            reports={reportFlow.reports}
+            selectedLocation={reportFlow.selectedLocation}
+
+            onMapPress={reportFlow.selectLocation}
+            onSelectReport={reportFlow.selectReport}
           />
         </View>
 
@@ -205,6 +221,56 @@ export default function HomeScreen() {
           )}
         </View>
 
+        <View
+          style={[
+            styles.reportHint,
+            {
+              backgroundColor: isDark ? "#241B38" : "#FFFFFF",
+              borderColor: colors.border,
+            },
+          ]}
+        >
+          <View style={styles.reportHintRow}>
+            <Ionicons
+              name="location-outline"
+              size={19}
+              color={colors.primaryPurple}
+            />
+
+            <Text
+              accessibilityLiveRegion="polite"
+              style={[
+                styles.reportHintText,
+                { color: colors.text },
+              ]}
+            >
+              {reportFlow.notice}
+            </Text>
+          </View>
+
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Adicionar relatos fictícios para testar"
+            onPress={reportFlow.loadExamples}
+            style={styles.reportTestButton}
+          >
+            <Ionicons
+              name="flask-outline"
+              size={16}
+              color={colors.primaryPurple}
+            />
+
+            <Text
+              style={[
+                styles.reportTestText,
+                { color: colors.primaryPurple },
+              ]}
+            >
+              Carregar relatos de teste
+            </Text>
+          </TouchableOpacity>
+        </View>
+
         {/* ================= BOTÕES FLUTUANTES (FABS À DIREITA) ================= */}
         <View style={styles.fabsContainer}>
           {/* Botão Recentralizar (Alvo / Mira GPS) */}
@@ -228,9 +294,7 @@ export default function HomeScreen() {
           <TouchableOpacity
             style={[styles.fabPrimary, { backgroundColor: colors.primaryPurple }]}
             activeOpacity={0.85}
-            onPress={() => {
-              setIsReportSheetOpen(true);
-            }}
+            onPress={reportFlow.openCreateReport}
             accessibilityLabel="Adicionar relato de risco"
           >
             <Ionicons name="warning" size={22} color="#FFFFFF" />
@@ -374,13 +438,21 @@ export default function HomeScreen() {
 
         {/* ================= BOTTOM SHEET ADICIONAR RELATO (FIGMA) ================= */}
         {/* Renderizado dentro do mainContainer para que a BottomNavigation continue visível no rodapé */}
-        <CreateReportBottomSheet
-          visible={isReportSheetOpen}
-          onClose={() => setIsReportSheetOpen(false)}
-          onSubmit={(data) => {
-            console.log("Relato criado:", data);
-          }}
-          currentAddress={`Lat: ${currentCoords.latitude.toFixed(4)}, Lng: ${currentCoords.longitude.toFixed(4)}`}
+        {reportFlow.creationSession && (
+          <CreateReportBottomSheet
+            key={reportFlow.creationSession.id}
+            visible
+            currentAddress={reportFlow.creationSession.address}
+            onClose={reportFlow.closeCreateReport}
+            onSubmit={reportFlow.createReport}
+          />
+        )}
+
+        <DangerPointDetailsModal
+          report={reportFlow.selectedReport}
+          onClose={reportFlow.closeDetails}
+          onToggleConfirmation={reportFlow.toggleConfirmation}
+          onAddComment={reportFlow.addComment}
         />
       </View>
 
@@ -501,6 +573,51 @@ const styles = StyleSheet.create({
     fontSize: theme.typography.sizes.sm,
     fontWeight: theme.typography.weights.bold,
     fontFamily: theme.typography.fontFamily,
+  },
+
+  reportHint: {
+    position: "absolute",
+    top: 76,
+    left: 16,
+    right: 16,
+    maxWidth: 480,
+    zIndex: 11,
+    padding: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+
+  reportHintRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+  },
+
+  reportHintText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+
+  reportTestButton: {
+    minHeight: 44,
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 4,
+    marginTop: 4,
+  },
+
+  reportTestText: {
+    fontSize: 12,
+    fontWeight: "700",
   },
 
   // FABs à Direita
