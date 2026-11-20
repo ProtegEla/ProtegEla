@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   StyleSheet,
   Text,
@@ -15,6 +15,15 @@ import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { theme, useAppTheme } from "../src/theme";
 import { BottomNavigation, ProfileMenuItem } from "../src/components/ui";
 import { useAuth } from "../src/features/auth/AuthContext";
+import { RiskMap, MapTileStyle } from "../src/features/map/components/RiskMap";
+import {
+  useCurrentLocation,
+  DEFAULT_SP_COORDINATES,
+} from "../src/features/map/hooks/useCurrentLocation";
+import { supportLocationsService } from "../src/services/api/supportLocations";
+import { SupportLocation, RiskZoneFeature } from "../src/features/map/types";
+import { Report, ReportCategory } from "../src/types/report";
+import { CreateReportBottomSheet } from "../src/features/reports/components/CreateReportBottomSheet";
 
 /**
  * Tela Principal / Home do ProtegEla (RF03, RF05, RF10, RF12, RF14).
@@ -36,6 +45,9 @@ export default function HomeScreen() {
   // Controle da gaveta/painel lateral
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
+  // Controle do Bottom Sheet de Adicionar Relato
+  const [isReportSheetOpen, setIsReportSheetOpen] = useState(false);
+
   const handleSaveInlineNickname = () => {
     if (tempNickname.trim().length >= 3) {
       updateNickname(tempNickname.trim());
@@ -48,10 +60,81 @@ export default function HomeScreen() {
     setIsDrawerOpen(false);
   };
 
+  // Localização atual da usuária (Web e Celular)
+  const { location, refreshLocation } = useCurrentLocation();
+  const currentCoords = location || DEFAULT_SP_COORDINATES;
+
+  // Estilo do mapa reativo ao tema da aplicação (claro vs escuro)
+  const mapStyle: MapTileStyle = isDark ? "clean_dark" : "clean";
+
+  // Estado para delegacias e pontos de apoio vindos da API
+  const [supportLocations, setSupportLocations] = useState<SupportLocation[]>([]);
+
+  // Refs para controle de debounce/throttle do fetch de delegacias.
+  // Só re-consulta se a usuária se deslocar mais de 500m da última posição consultada.
+  const lastFetchedCoordsRef = useRef<{ latitude: number; longitude: number } | null>(null);
+  const isFetchingRef = useRef(false);
+
+  /**
+   * Distância euclidiana em metros entre duas coordenadas (Haversine simplificado).
+   */
+  const haversineDistanceM = useCallback(
+    (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+      const R = 6_371_000;
+      const dLat = ((lat2 - lat1) * Math.PI) / 180;
+      const dLon = ((lon2 - lon1) * Math.PI) / 180;
+      const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos((lat1 * Math.PI) / 180) *
+          Math.cos((lat2 * Math.PI) / 180) *
+          Math.sin(dLon / 2) ** 2;
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    },
+    []
+  );
+
+  // Carregar delegacias próximas — só re-consulta quando a usuária se deslocar > 500m
+  useEffect(() => {
+    if (!currentCoords) return;
+    if (isFetchingRef.current) return;
+
+    // Verifica se já consultou nessa região (threshold de 500m)
+    if (lastFetchedCoordsRef.current) {
+      const dist = haversineDistanceM(
+        lastFetchedCoordsRef.current.latitude,
+        lastFetchedCoordsRef.current.longitude,
+        currentCoords.latitude,
+        currentCoords.longitude
+      );
+      if (dist < 500) return; // Não re-consulta se deslocamento < 500m
+    }
+
+    isFetchingRef.current = true;
+    lastFetchedCoordsRef.current = {
+      latitude: currentCoords.latitude,
+      longitude: currentCoords.longitude,
+    };
+
+    supportLocationsService
+      .getNearby({
+        latitude: currentCoords.latitude,
+        longitude: currentCoords.longitude,
+        radius_meters: 5000,
+      })
+      .then((data) => {
+        if (data && data.length > 0) {
+          setSupportLocations(data);
+        }
+      })
+      .finally(() => {
+        isFetchingRef.current = false;
+      });
+  }, [currentCoords.latitude, currentCoords.longitude, haversineDistanceM]);
+
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.screenBackground }]}>
       <View style={styles.mainContainer}>
-        {/* ================= ÁREA DO MAPA (LIMPA / SEM ELEMENTOS ESTOURANDO) ================= */}
+        {/* ================= ÁREA DO MAPA INTERATIVO ================= */}
         <View
           style={[
             styles.mapArea,
@@ -61,20 +144,13 @@ export default function HomeScreen() {
             },
           ]}
         >
-          <View style={styles.mapCenterNotice}>
-            <MaterialCommunityIcons
-              name="map-outline"
-              size={48}
-              color={colors.textMuted}
-              style={{ opacity: 0.5, marginBottom: 8 }}
-            />
-            <Text style={[styles.mapNoticeTitle, { color: colors.text }]}>
-              Área do Mapa Interativo
-            </Text>
-            <Text style={[styles.mapNoticeSubtitle, { color: colors.textMuted }]}>
-              Carregando camadas e dados de rotas seguras via API.
-            </Text>
-          </View>
+          <RiskMap
+            center={currentCoords}
+            userLocation={location}
+            mapStyle={mapStyle}
+            supportLocations={supportLocations}
+            zoom={16}
+          />
         </View>
 
         {/* ================= BARRA SUPERIOR (BUSCA + AÇÃO CONFORME ESTADO) ================= */}
@@ -138,6 +214,7 @@ export default function HomeScreen() {
               { backgroundColor: isDark ? "#241B38" : "#EDE9F5" },
             ]}
             activeOpacity={0.8}
+            onPress={() => refreshLocation()}
             accessibilityLabel="Recentralizar mapa"
           >
             <MaterialCommunityIcons
@@ -152,9 +229,7 @@ export default function HomeScreen() {
             style={[styles.fabPrimary, { backgroundColor: colors.primaryPurple }]}
             activeOpacity={0.85}
             onPress={() => {
-              if (!isLoggedIn) {
-                router.push("/login");
-              }
+              setIsReportSheetOpen(true);
             }}
             accessibilityLabel="Adicionar relato de risco"
           >
@@ -274,7 +349,13 @@ export default function HomeScreen() {
 
                 {/* Itens do Menu */}
                 <View style={styles.menuItemsList}>
-                  <ProfileMenuItem label="Configurações" />
+                  <ProfileMenuItem
+                    label="Configurações"
+                    onPress={() => {
+                      setIsDrawerOpen(false);
+                      router.push("/settings");
+                    }}
+                  />
                   <ProfileMenuItem
                     label={isDark ? "Modo claro" : "Modo escuro"}
                     onPress={toggleTheme}
@@ -290,10 +371,21 @@ export default function HomeScreen() {
             </View>
           </View>
         </Modal>
+
+        {/* ================= BOTTOM SHEET ADICIONAR RELATO (FIGMA) ================= */}
+        {/* Renderizado dentro do mainContainer para que a BottomNavigation continue visível no rodapé */}
+        <CreateReportBottomSheet
+          visible={isReportSheetOpen}
+          onClose={() => setIsReportSheetOpen(false)}
+          onSubmit={(data) => {
+            console.log("Relato criado:", data);
+          }}
+          currentAddress={`Lat: ${currentCoords.latitude.toFixed(4)}, Lng: ${currentCoords.longitude.toFixed(4)}`}
+        />
       </View>
 
       {/* ================= BARRA INFERIOR PERSISTENTE (SOS SEMPRE ACESSÍVEL) ================= */}
-      <BottomNavigation onTabPress={(tab) => router.push(tab)} />
+      <BottomNavigation onTabPress={(tab) => router.push(tab)} onPanicPress={() => router.push("/emergency")} />
     </SafeAreaView>
   );
 }

@@ -84,6 +84,19 @@ O rate limiting do login utiliza o IP identificado pelo servidor. O controle ind
 
 Em ambientes com proxy reverso, a identificação correta do IP de origem depende da configuração de proxies confiáveis.
 
+#### Recuperação de senha (RF16)
+
+As duas rotas aceitam JSON e são públicas.
+
+| Rota | Corpo da requisição | Respostas |
+| --- | --- | --- |
+| `POST /api/v1/auth/forgot-password` | `{"email":"usuaria@example.com"}` | `200` para uma solicitação válida e `422` para corpo inválido. |
+| `POST /api/v1/auth/reset-password` | `{"token":"<token recebido por e-mail>","new_password":"NovaSenha@123"}` | `200` após redefinir a senha, `401` para token inválido, expirado ou já usado e `422` para corpo inválido ou senha fora da política RN08. |
+
+O `200` de `forgot-password` retorna `{"message":"Se o e-mail estiver cadastrado, você receberá um link para redefinir sua senha."}`, inclusive para e-mails desconhecidos e em caso de falha no envio. Para confirmar a entrega, confira a caixa de entrada do destinatário.
+
+O link usa a `PASSWORD_RESET_URL` configurada no backend com o parâmetro `token`. O token expira em 15 minutos, é de uso único e só tem seu hash armazenado no banco. Uma nova solicitação invalida os tokens anteriores da conta. A nova senha deve ter de 8 a 128 caracteres, com letra maiúscula, letra minúscula, número e caractere especial. Após a troca, a resposta é `{"message":"Senha redefinida com sucesso."}`.
+
 ### 2.2. Acesso Sem Login (RF04)
 - Para usuárias que optam por usar o mapa, rotas e pânico sem autenticação:
   - O aplicativo gera um identificador local pseudo-anônimo (UUID) persistido no cliente.
@@ -160,7 +173,8 @@ Toda falha (códigos HTTP 4xx e 5xx) deve obrigatoriamente retornar uma estrutur
 | **auth** | `POST` | `/api/v1/auth/register` | Cadastro de usuária e contatos de emergência (RF01) | Proposta em discussão |
 | **auth** | `POST` | `/api/v1/auth/login` | Autenticação, emissão de tokens e limite de tentativas (RF02/RN06) | Implementado no backend; pendente de validação da equipe |
 | **auth** | `POST` | `/api/v1/auth/refresh` | Renovação de Access Token | Proposta em discussão |
-| **auth** | `POST` | `/api/v1/auth/forgot-password` | Solicitação de recuperação de senha (RF16) | Proposta em discussão |
+| **auth** | `POST` | `/api/v1/auth/forgot-password` | Solicitação de recuperação de senha (RF16) | Implementado no backend |
+| **auth** | `POST` | `/api/v1/auth/reset-password` | Redefinição de senha com token (RF16) | Implementado no backend |
 | **users** | `GET` | `/api/v1/users/me` | Dados do perfil da usuária logada | Proposta em discussão |
 | **users** | `PUT` | `/api/v1/users/me` | Atualização de perfil e preferências (RF17) | Proposta em discussão |
 | **users** | `DELETE` | `/api/v1/users/me` | Exclusão definitiva de conta e dados (LGPD) | Proposta em discussão |
@@ -175,12 +189,36 @@ Toda falha (códigos HTTP 4xx e 5xx) deve obrigatoriamente retornar uma estrutur
 | **routes** | `POST` | `/api/v1/routes/calculate` | Cálculo de rota segura desviando de áreas de risco (RF15) | Proposta em discussão |
 | **emergency** | `GET` | `/api/v1/emergency/call-target` | Telefone para ligação do botão de emergência (RF14) | Implementado |
 | **emergency** | `POST` | `/api/v1/emergency/panic` | Registro de acionamento do botão de pânico (RF14) | Proposta em discussão |
-| **emergency** | `GET` | `/api/v1/emergency/useful-numbers`| Lista de telefones de utilidade pública (RF10) | Proposta em discussão |
+| **emergency** | `GET` | `/api/v1/emergency/useful-numbers` | Lista de telefones de utilidade pública (RF10) | Implementado (números públicos) |
 | **support_locations**| `GET` | `/api/v1/support-locations/nearby` | Delegacias e hospitais próximos via OSM/Overpass (RF12) | Proposta em discussão |
 | **notifications** | `POST` | `/api/v1/notifications/proximity-alert` | Verificação de entrada em zona de risco (RF13) | Proposta em discussão |
 | **core** | `GET` | `/api/v1/health` | Healthcheck de integridade do backend e banco | Aprovado |
 | **safety_guides** | `GET` | `/api/v1/safety-guides` | Lista de orientações e dicas de segurança (RF11) | Implementado |
 | **safety_guides** | `GET` | `/api/v1/safety-guides/{slug}` | Texto completo de uma orientação (RF11) | Implementado |
+
+### 5.1. Telefones úteis (RF10)
+
+**GET `/api/v1/emergency/useful-numbers`**
+
+Retorna uma lista de telefones públicos úteis para segurança e emergência, sem necessidade de autenticação.
+
+**Resposta (200 OK):**
+
+```json
+{
+  "data": [
+    {
+      "name": "Central de Atendimento à Mulher",
+      "phone": "180",
+      "description": "Orientação e denúncias de violência contra a mulher."
+    }
+  ]
+}
+```
+
+O exemplo apresenta apenas um item. A lista completa contém os números 180, 190, 192, 193 e 100.
+
+Os contatos pessoais cadastrados pela usuária não estão incluídos nesta implementação.
 
 ---
 
@@ -864,3 +902,194 @@ Respostas bem-sucedidas utilizam `Cache-Control: no-store`.
 Falhas de banco ou descriptografia retornam erro interno e não são interpretadas
 como ausência de contato. O backend não realiza a ligação, não registra o
 acionamento e não recebe localização neste endpoint.
+
+## 15. Busca de endereços
+
+`GET /api/v1/addresses/suggestions?q=Paulista&limit=5` é público.
+`q`: 3–200 caracteres após remover espaços nas extremidades;
+`limit`: 1–10, padrão 5. Retorno: `200 {data: [{id, label, latitude, longitude}]}`;
+sem resultados: `200 {data: []}`. O cliente centraliza o mapa nas coordenadas
+da sugestão selecionada; recomenda-se debounce de 300 ms e descarte de respostas
+de pesquisas anteriores no frontend.
+
+Fonte: [ORS/Pelias autocomplete](https://giscience.github.io/openrouteservice/v9.10.0/api-reference/endpoints/geocoder/),
+com a chave `OPENROUTESERVICE_API_KEY`, URL `OPENROUTESERVICE_AUTOCOMPLETE_URL`
+e timeout `OPENROUTESERVICE_TIMEOUT_SECONDS`. Restringe ao Brasil e prioriza
+proximidade do centro de São Paulo, sem garantir limite municipal. Preserva a
+relevância do provedor, remove IDs repetidos e limita a lista. IDs são externos
+do Pelias (não UUIDs). A cobertura depende dos dados disponíveis no provedor.
+
+Erros padronizados: `422 VALIDATION_ERROR`, `429 RATE_LIMIT_EXCEEDED` e
+`503 EXTERNAL_SERVICE_UNAVAILABLE` (inclui chave ausente, cota externa esgotada
+ou resposta externa inválida). Limite local: `ADDRESS_SEARCH_REQUESTS_PER_MINUTE`
+(padrão 60), compartilhado entre clientes por processo, janela móvel de 60 s,
+inclusive tentativas externas malsucedidas; reinicia com o processo. Múltiplos
+workers exigem limite agregado no gateway conforme a cota da equipe.
+
+Sem banco, histórico ou logs próprios de consultas. O texto é enviado ao ORS;
+configurar logs de acesso/proxy/HTTP para omitir query strings e credenciais.
+Sucesso usa `Cache-Control: no-store`. Validar cobertura, cota da chave e
+atribuição dos dados com a equipe antes de produção. Nominatim público não
+permite autocomplete; Overpass permanece na consulta de locais de apoio.
+
+## 16. Rotas para pedestres — RF15
+
+`POST /api/v1/routes/calculate` é público, JSON, sem JWT ou dispositivo obrigatório.
+
+```json
+{
+  "origin": {"latitude": -23.55052, "longitude": -46.633308},
+  "destination": {"latitude": -23.5614, "longitude": -46.6559},
+  "stops": []
+}
+```
+
+Origem/destino obrigatórios; até 3 paradas, padrão `[]`, na ordem informada.
+Coordenadas numéricas finitas nos intervalos latitude [-90,90], longitude [-180,180];
+rejeitar campos extras e pontos consecutivos iguais. GPS e conversão de endereços
+em coordenadas pertencem ao cliente. Não otimizar a ordem das paradas.
+
+### Resposta e comparação
+
+`200 {data: {routes, comparison, attribution}}`, com `Cache-Control: no-store`.
+De 1 a 3 trajetos distintos para pedestres, ordenados por duração e geometria
+para desempate, preservando a rápida e a de menor exposição quando distintas.
+
+| Campo de cada trajeto | Formato |
+| --- | --- |
+| `id` | UUID v4 temporário, sem persistência ou endpoint de recuperação. |
+| `geometry` | GeoJSON LineString WGS84, pares `[longitude, latitude]`. |
+| `distance_m`, `duration_s` | Números finitos positivos; metros e segundos. |
+| `legs` | Um trecho por par consecutivo de pontos, com `distance_m`, `duration_s`, `steps`. |
+| `steps` | `instruction` (texto em português), `distance_m`, `duration_s` não negativos e `way_points` (dois índices inclusivos na geometria completa). |
+| `risk` | `status`: `evaluated`, `no_mapped_data`, `unavailable`; `exposure_score`: número finito não negativo apenas em `evaluated`, senão null. |
+
+Totais somam os trechos; junções não duplicam vértices. `attribution` preserva
+o texto de atribuição do provedor para exibição no aplicativo.
+
+| Campo de `comparison` | Semântica |
+| --- | --- |
+| `fastest_route_id` | Menor duração entre as candidatas, sem garantia de ótimo global. |
+| `lower_risk_route_id` | Menor exposição, somente se todas forem avaliadas e houver melhora estrita sobre a rápida; senão null. Desempate por duração e geometria. |
+| `extra_duration_percent` | `100 * (duration_lower_risk / duration_fastest - 1)`; null sem comparação. |
+| `exceeds_30_percent` | `duration_lower_risk > 1.30 * duration_fastest`, sem arredondamento; null sem comparação. |
+| `status` | `lower_risk_available`, `no_lower_risk_alternative`, `no_mapped_data`, `risk_unavailable`. |
+
+RN07 mantém ambas as opções quando o desvio excede 30%; exatamente 30% não alerta.
+Uma única candidata ou empate de exposição não inventa alternativa de menor risco.
+Falha parcial de avaliação impede recomendação. Ausência de dados não significa
+segurança; não são expostos níveis ou probabilidade de crime.
+
+### Integrações e limites
+
+ORS `foot-walking/geojson`, preferência `fastest`, instruções `pt-br`, configuração
+`OPENROUTESERVICE_*` existente. Alternativas só aceitam dois pontos: até 4 chamadas
+por cálculo, 3 alternativas por trecho e 81 combinações em memória, todas avaliadas
+antes de selecionar 3. Junções desconectadas são descartadas, sem ligações artificiais.
+Distâncias diretas somadas até 50 km (422); candidatas até 100 km caminhados;
+sem itinerário contínuo dentro do limite, 503. Sem retries.
+
+ORS tem orçamento global `OPENROUTESERVICE_TIMEOUT_SECONDS` (padrão 8 s);
+avaliação de risco acrescenta até 5 s. `ROUTE_REQUESTS_PER_MINUTE` (padrão 10)
+limita cálculos por processo numa janela móvel de 60 s, incluindo falhas externas;
+reinicia com o processo. Múltiplos workers exigem limite agregado no gateway.
+
+Erros no envelope global: `422 VALIDATION_ERROR`; `422 ROUTE_NOT_FOUND` quando
+o provedor confirma ausência de caminho/ajuste de algum ponto; `429 RATE_LIMIT_EXCEEDED`
+para limite local; `503 EXTERNAL_SERVICE_UNAVAILABLE` para timeout, chave/cota externa,
+resposta inválida ou falta de composição contínua. Nunca retornar itinerário incompleto.
+Falhas de banco/Overpass/associação preservam os trajetos com risco `unavailable`.
+
+### Métrica aprovada — avaliação incremental
+
+`risk_zones` calcula elegibilidade/pontuação; `routes` calcula exposição e compara.
+O agrupamento do mapa RF06 permanece inalterado. Snapshot único de relatos visíveis,
+votos e SSP ativo; mesma referência temporal em `America/Sao_Paulo` para as candidatas.
+
+- Grupo elegível: algum relato com 3 confirmações distintas nos últimos 6 meses,
+  ou presença de SSP ativo. Não somar votos de relatos diferentes para atingir 3.
+- Peso comunitário: `(1 + confirmações_recentes) × fator_temporal` por relato;
+  fator 1 até 6 meses sem atividade no grupo, 0,5 depois. Atividade é criação,
+  confirmação ou denúncia posterior; denúncias não somam pontos.
+- SSP: peso 2 até 12 meses desde o incidente; depois, piso histórico 0,5.
+  Datas futuras não contribuem. Meses civis com limites inclusivos.
+- Exposição: soma de `metros percorridos no trecho × pontuação do trecho`.
+  Somar contribuições dos grupos, uma vez por grupo/via; travessias repetidas
+  contam novamente. Não normalizar pelo comprimento total.
+
+Uma consulta Overpass obtém até 2.000 ways caminháveis da caixa das candidatas,
+com margem aproximada de 50 m, área máxima 100 km². Avaliação restrita à região
+WGS84 [-47,5,-24,5,-45,5,-22,5]; até 10.000 incidentes globais para agrupamento,
+antes do recorte. Exceder limites deixa risco indisponível, sem truncamento.
+
+PostGIS usa projeção local SIRGAS 2000 / UTM 23S (31983) e comprimentos no elipsoide.
+Incidente associa-se à way mais próxima até 20 m, com diferença maior que 1 m para
+a segunda; cada segmento ORS deve caber inteiramente na tolerância de 3 m de uma
+única way. Ambiguidades, lacunas, pontes, túneis, ambientes internos ou camadas não
+zero impedem recomendação. O peso aplica-se à way inteira: ways longas podem ampliar
+a área penalizada. Essa aproximação geométrica não confirma identidade no grafo ORS;
+validar com dados reais. Falta de incidentes válidos na caixa dá `no_mapped_data`;
+registros existentes sem grupos elegíveis podem dar exposição zero, sem garantir segurança.
+
+Atendimento parcial à RN04 aprovado: comparar candidatas, sem bloquear polígonos
+ou modificar pesos no motor. O [ORS público não oferece custom models](https://giscience.github.io/openrouteservice/api-reference/endpoints/directions/custom-models).
+Trajetos/consultas/vias são processados em memória; ORS recebe os pontos e Overpass
+a caixa geográfica, sem identidade pessoal. Não registrar corpos ou credenciais.
+Sem migração ou histórico de GPS. Início da navegação, cache offline e notificação
+persistente são responsabilidades do aplicativo, sem endpoint de rastreamento.
+
+Revisão final: 100 testes passaram, incluindo PostGIS real e regressão de zonas
+e endereços; ORS/Overpass simulados. Chave ORS real, cobertura/precisão OSM e
+integração mobile ainda exigem validação antes da entrega completa do RF15.
+
+## 17. Histórico de pesquisas e rotas
+
+Escopo: listas privadas compartilhadas pelas telas de seleção de rota e perfil;
+separadas do histórico de relatos/comentários de `/users/me/activity`.
+Registrar somente a sugestão selecionada ou a rota escolhida, por chamada
+explícita do aplicativo. Autocomplete e cálculo públicos não salvam histórico.
+
+| Recurso | Operações | Dados de entrada |
+| --- | --- | --- |
+| `/api/v1/users/me/search-history` | POST, GET, DELETE | POST: `label` (1–300 caracteres após trim). |
+| `/api/v1/users/me/route-history` | POST, GET, DELETE | POST: `origin_label`, `destination_label`, `stop_labels` (até 3), `distance_m`, `duration_s` positivos e finitos. Labels: 1–300 caracteres após trim. |
+
+Access token e conta existente obrigatórios em todas as operações; identidade
+exclusiva do servidor, sem `user_id` na entrada. POST rejeita campos extras,
+retorna `201 {data: registro}`. Resumo informado pelo cliente não é prova de
+rota calculada pelo ORS; não armazenar classificação de segurança ou ID temporário
+da candidata. Sem coordenadas, geometria, instruções ou trilha de GPS. Para origem
+GPS sem endereço escolhido, usar o rótulo “Localização atual”.
+
+GET: `page=1`, `page_size=20` (1–100), envelope `data`/`meta` existente;
+cada registro inclui UUID v4, campos do resumo e `created_at` UTC do servidor.
+Ordenação `created_at DESC, id DESC`. Cada seleção gera um evento; não registrar
+teclas digitadas. DELETE limpa definitivamente a lista da conta e retorna 204.
+Erros globais: 401 para identidade inválida, 422 para entrada inválida.
+Respostas privadas usam `Cache-Control: no-store`.
+
+Política aprovada: até 100 registros por lista/conta, retenção
+máxima de 30 dias; rótulos cifrados com a infraestrutura Fernet existente.
+Expiração excluída das consultas e limpeza física nas operações e em comando
+periódico de manutenção, cujo agendamento deve fazer parte da implantação.
+Remoção da conta deverá apagar o histórico associado. Navegação em segundo
+plano não acrescenta registros. O histórico permite consultar resumos; reabrir
+ou recalcular um trajeto exigirá nova busca e novo cálculo.
+
+Implementado em `history`, reutilizando autenticação e paginação existentes.
+Migração `0009_create_history`, após `d54d18c82688`: tabela `history_entries`
+com tipo de lista e resumo JSON integralmente cifrado. Bloqueio da conta serializa
+operações concorrentes; registros mais antigos são removidos ao ultrapassar 100.
+Expirações usam o relógio PostgreSQL (limite de 30 dias exclusivo para leitura).
+Exclusão da conta remove os registros via FK `ON DELETE CASCADE`.
+
+Manutenção: executar diariamente, a partir de `backend`,
+`python -m src.modules.history.cleanup` com o ambiente do servidor.
+O comando exclui fisicamente expirados de todas as contas e só informa a contagem;
+sem agendamento, contas inativas dependem da próxima operação para limpeza física.
+Nenhuma mudança no frontend: ele deve chamar POST apenas após a seleção e usar
+os mesmos GETs nas duas telas. Repetir POST cria outro evento (sem idempotência);
+não repetir automaticamente após timeout. Sucesso privado usa `no-store`.
+
+Validação: 132 testes passaram, incluindo PostgreSQL/PostGIS real, concorrência,
+expiração, isolamento entre contas e upgrade/downgrade/check do Alembic.
