@@ -463,6 +463,7 @@ export default function HomeScreen() {
             </TouchableOpacity>
 
             {isLoggedIn ? (
+              /* Botão de 3 barrinhas (quando logada) */
               <TouchableOpacity
                 style={[
                   styles.iconButton,
@@ -475,6 +476,7 @@ export default function HomeScreen() {
                 <Ionicons name="menu" size={24} color={colors.primaryPurple} />
               </TouchableOpacity>
             ) : (
+              /* Botão direto "Entrar" (quando deslogada - RF03) */
               <TouchableOpacity
                 style={[
                   styles.loginButtonTop,
@@ -490,265 +492,267 @@ export default function HomeScreen() {
           </View>
         )}
 
-        {/* ================= BOTÕES FLUTUANTES (FABS À DIREITA) ================= */}
-        <View style={styles.fabsContainer}>
-          {/* Botão Recentralizar (Alvo / Mira GPS) */}
-          <TouchableOpacity
-            style={[
-              styles.fabSmall,
-              { backgroundColor: isDark ? "#241B38" : "#EDE9F5" },
-            ]}
-            activeOpacity={0.8}
-            onPress={handleRecentralizeGps}
-            accessibilityLabel="Recentralizar mapa"
-          >
-            <MaterialCommunityIcons
-              name="crosshairs-gps"
-              size={24}
-              color={colors.primaryPurple}
-            />
-          </TouchableOpacity>
-
-          {/* Botão Adicionar Relato (Roxo + Triângulo) */}
-          <TouchableOpacity
-            style={[styles.fabPrimary, { backgroundColor: colors.primaryPurple }]}
-            activeOpacity={0.85}
-            onPress={() => {
-              setIsReportSheetOpen(true);
-            }}
-            accessibilityLabel="Adicionar relato de risco"
-          >
-            <Ionicons name="warning" size={22} color="#FFFFFF" />
-            <Text style={styles.fabPlusSign}>+</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* ================= PAINEL LATERAL / DRAWER DO PERFIL ================= */}
-        <Modal
-          visible={isDrawerOpen}
-          animationType="fade"
-          transparent
-          onRequestClose={() => {
-            setIsEditingNickname(false);
-            setIsDrawerOpen(false);
-          }}
+      {/* ================= BOTÕES FLUTUANTES (FABS À DIREITA) ================= */}
+      <View style={styles.fabsContainer}>
+        {/* Botão Recentralizar (Alvo / Mira GPS) */}
+        <TouchableOpacity
+          style={[
+            styles.fabSmall,
+            { backgroundColor: isDark ? "#241B38" : "#EDE9F5" },
+          ]}
+          activeOpacity={0.8}
+          onPress={handleRecentralizeGps}
+          accessibilityLabel="Recentralizar mapa"
         >
-          <View style={styles.drawerOverlay}>
-            {/* Backdrop clicável fora da sidebar (área do mapa) */}
-            <TouchableOpacity
-              style={styles.backdropPressable}
-              activeOpacity={1}
-              onPress={() => {
-                setIsEditingNickname(false);
-                setIsDrawerOpen(false);
-              }}
-              accessibilityLabel="Fechar menu ao tocar fora"
-            />
-
-            <View
-              style={[
-                styles.drawerContainer,
-                { backgroundColor: colors.screenBackground },
-              ]}
-            >
-              {/* Botão de Fechar no topo direito */}
-              <View style={styles.drawerHeader}>
-                <TouchableOpacity
-                  onPress={() => {
-                    setIsEditingNickname(false);
-                    setIsDrawerOpen(false);
-                  }}
-                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                  accessibilityLabel="Fechar menu"
-                >
-                  <Ionicons name="close" size={28} color={colors.text} />
-                </TouchableOpacity>
-              </View>
-
-              <ScrollView
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={styles.drawerScroll}
-              >
-                {/* Seção da Usuária com Edição Inline */}
-                <View style={styles.userSection}>
-                  <View style={styles.nameRow}>
-                    {isEditingNickname ? (
-                      <View style={styles.inlineEditWrapper}>
-                        <TextInput
-                          value={tempNickname}
-                          onChangeText={setTempNickname}
-                          autoFocus
-                          style={[
-                            styles.inlineInput,
-                            {
-                              color: colors.profileTitlePurple,
-                              borderColor: colors.primaryPurple,
-                              backgroundColor: colors.inputBackground,
-                            },
-                          ]}
-                          onSubmitEditing={handleSaveInlineNickname}
-                        />
-                        <TouchableOpacity
-                          style={[
-                            styles.inlineSaveBtn,
-                            { backgroundColor: colors.primaryPurple },
-                          ]}
-                          onPress={handleSaveInlineNickname}
-                          accessibilityLabel="Salvar apelido"
-                        >
-                          <Ionicons name="checkmark" size={18} color="#FFFFFF" />
-                        </TouchableOpacity>
-                      </View>
-                    ) : (
-                      <View style={styles.inlineDisplayWrapper}>
-                        <Text
-                          style={[
-                            styles.nicknameText,
-                            { color: colors.profileTitlePurple },
-                          ]}
-                        >
-                          {nickname}
-                        </Text>
-                        <TouchableOpacity
-                          style={styles.editIconBadge}
-                          onPress={() => {
-                            setTempNickname(nickname);
-                            setIsEditingNickname(true);
-                          }}
-                          accessibilityLabel="Editar apelido diretamente"
-                        >
-                          <Ionicons name="pencil" size={13} color="#FFFFFF" />
-                        </TouchableOpacity>
-                      </View>
-                    )}
-                  </View>
-                  <Text
-                    style={[
-                      styles.emailText,
-                      { color: colors.profileSubtitlePurple },
-                    ]}
-                  >
-                    {email}
-                  </Text>
-                </View>
-
-                {/* Itens do Menu */}
-                <View style={styles.menuItemsList}>
-                  <ProfileMenuItem
-                    label="Configurações"
-                    onPress={() => {
-                      setIsDrawerOpen(false);
-                      router.push("/settings");
-                    }}
-                  />
-                  <ProfileMenuItem
-                    label={isDark ? "Modo claro" : "Modo escuro"}
-                    onPress={toggleTheme}
-                  />
-                  <ProfileMenuItem label="Histórico" />
-                  <ProfileMenuItem
-                    label="Sair"
-                    variant="danger"
-                    onPress={handleLogout}
-                  />
-                </View>
-              </ScrollView>
-            </View>
-          </View>
-        </Modal>
-
-        {/* ================= BOTTOM SHEET ADICIONAR RELATO (FIGMA) ================= */}
-        <CreateReportBottomSheet
-          visible={isReportSheetOpen}
-          onClose={() => setIsReportSheetOpen(false)}
-          onSubmit={handleCreateReport}
-          currentAddress={
-            selectedAddressInfo?.label ||
-            (location ? "Minha localização atual (GPS)" : "São Paulo - SP")
-          }
-          currentCoordinates={selectedAddressInfo?.coords || currentCoords}
-        />
-
-        {/* ================= CARD DE CONFIRMAÇÃO DE DESTINO (TRAÇAR ROTA) ================= */}
-        {!isRouteMode && selectedAddressInfo && (
-          <View style={styles.destinationCardContainer}>
-            <View
-              style={[
-                styles.destinationCard,
-                {
-                  backgroundColor: isDark ? colors.surface : "#FFFFFF",
-                  borderColor: isDark ? colors.border : "#E2D9F3",
-                },
-              ]}
-            >
-              <View style={styles.destinationCardTextCol}>
-                <Text
-                  style={[styles.destinationCardTitle, { color: colors.text }]}
-                  numberOfLines={1}
-                >
-                  {selectedAddressInfo.label.split(",")[0]}
-                </Text>
-                <Text
-                  style={[styles.destinationCardSubtitle, { color: colors.textMuted }]}
-                  numberOfLines={1}
-                >
-                  {selectedAddressInfo.label.split(",").slice(1).join(", ").trim()}
-                </Text>
-              </View>
-
-              <TouchableOpacity
-                style={[styles.routeActionBtn, { backgroundColor: colors.primaryPurple }]}
-                activeOpacity={0.85}
-                onPress={() =>
-                  handleTriggerRouteCalculation(
-                    selectedAddressInfo.coords,
-                    selectedAddressInfo.label
-                  )
-                }
-              >
-                <Ionicons name="navigate" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-                <Text style={styles.routeActionBtnText}>Traçar Rota</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.closeDestinationBtn}
-                onPress={handleClearSearch}
-                accessibilityLabel="Desmarcar local"
-              >
-                <Ionicons name="close" size={20} color={colors.textMuted} />
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-
-        {/* ================= BOTTOM SHEET OPÇÕES DE ROTA (IMAGEM 2) ================= */}
-        {isRouteMode && (
-          <RouteOptionsBottomSheet
-            routes={calculatedRoutes}
-            selectedRouteId={selectedRouteId}
-            onSelectRoute={(id) => setSelectedRouteId(id)}
-            loading={isCalculatingRoutes}
-            exceeds30Percent={routeComparison?.exceeds_30_percent}
+          <MaterialCommunityIcons
+            name="crosshairs-gps"
+            size={24}
+            color={colors.primaryPurple}
           />
-        )}
+        </TouchableOpacity>
 
-        {/* ================= MODAL DE BUSCA EXPANDIDA COM RECENTES (IMAGEM 1) ================= */}
-        <AddressSearchModal
-          visible={isSearchModalOpen}
-          onClose={() => setIsSearchModalOpen(false)}
-          onSelectAddress={handleSelectSearchedAddress}
-          initialQuery={searchQuery}
-        />
+        {/* Botão Adicionar Relato (Roxo + Triângulo) */}
+        <TouchableOpacity
+          style={[styles.fabPrimary, { backgroundColor: colors.primaryPurple }]}
+          activeOpacity={0.85}
+          onPress={() => {
+            setIsReportSheetOpen(true);
+          }}
+          accessibilityLabel="Adicionar relato de risco"
+        >
+          <Ionicons name="warning" size={22} color="#FFFFFF" />
+          <Text style={styles.fabPlusSign}>+</Text>
+        </TouchableOpacity>
       </View>
 
-      {/* ================= BARRA INFERIOR PERSISTENTE (SOS SEMPRE ACESSÍVEL) ================= */}
-      {!isRouteMode && (
-        <BottomNavigation
-          onTabPress={(tab) => router.push(tab)}
-          onPanicPress={() => router.push("/emergency")}
+      {/* ================= PAINEL LATERAL / DRAWER DO PERFIL ================= */}
+      <Modal
+        visible={isDrawerOpen}
+        animationType="fade"
+        transparent
+        onRequestClose={() => {
+          setIsEditingNickname(false);
+          setIsDrawerOpen(false);
+        }}
+      >
+        <View style={styles.drawerOverlay}>
+          {/* Backdrop clicável fora da sidebar (área do mapa) */}
+          <TouchableOpacity
+            style={styles.backdropPressable}
+            activeOpacity={1}
+            onPress={() => {
+              setIsEditingNickname(false);
+              setIsDrawerOpen(false);
+            }}
+            accessibilityLabel="Fechar menu ao tocar fora"
+          />
+
+          <View
+            style={[
+              styles.drawerContainer,
+              { backgroundColor: colors.screenBackground },
+            ]}
+          >
+            {/* Botão de Fechar no topo direito */}
+            <View style={styles.drawerHeader}>
+              <TouchableOpacity
+                onPress={() => {
+                  setIsEditingNickname(false);
+                  setIsDrawerOpen(false);
+                }}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                accessibilityLabel="Fechar menu"
+              >
+                <Ionicons name="close" size={28} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.drawerScroll}
+            >
+              {/* Seção da Usuária com Edição Inline */}
+              <View style={styles.userSection}>
+                <View style={styles.nameRow}>
+                  {isEditingNickname ? (
+                    <View style={styles.inlineEditWrapper}>
+                      <TextInput
+                        value={tempNickname}
+                        onChangeText={setTempNickname}
+                        autoFocus
+                        style={[
+                          styles.inlineInput,
+                          {
+                            color: colors.profileTitlePurple,
+                            borderColor: colors.primaryPurple,
+                            backgroundColor: colors.inputBackground,
+                          },
+                        ]}
+                        onSubmitEditing={handleSaveInlineNickname}
+                      />
+                      <TouchableOpacity
+                        style={[
+                          styles.inlineSaveBtn,
+                          { backgroundColor: colors.primaryPurple },
+                        ]}
+                        onPress={handleSaveInlineNickname}
+                        accessibilityLabel="Salvar apelido"
+                      >
+                        <Ionicons name="checkmark" size={18} color="#FFFFFF" />
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View style={styles.inlineDisplayWrapper}>
+                      <Text
+                        style={[
+                          styles.nicknameText,
+                          { color: colors.profileTitlePurple },
+                        ]}
+                      >
+                        {nickname}
+                      </Text>
+                      <TouchableOpacity
+                        style={styles.editIconBadge}
+                        onPress={() => {
+                          setTempNickname(nickname);
+                          setIsEditingNickname(true);
+                        }}
+                        accessibilityLabel="Editar apelido diretamente"
+                      >
+                        <Ionicons name="pencil" size={13} color="#FFFFFF" />
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+                <Text
+                  style={[
+                    styles.emailText,
+                    { color: colors.profileSubtitlePurple },
+                  ]}
+                >
+                  {email}
+                </Text>
+              </View>
+
+              {/* Itens do Menu */}
+              <View style={styles.menuItemsList}>
+                <ProfileMenuItem
+                  label="Configurações"
+                  onPress={() => {
+                    setIsDrawerOpen(false);
+                    router.push("/settings");
+                  }}
+                />
+                <ProfileMenuItem
+                  label={isDark ? "Modo claro" : "Modo escuro"}
+                  onPress={toggleTheme}
+                />
+                <ProfileMenuItem label="Histórico" />
+                <ProfileMenuItem
+                  label="Sair"
+                  variant="danger"
+                  onPress={handleLogout}
+                />
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ================= BOTTOM SHEET ADICIONAR RELATO (FIGMA) ================= */}
+      <CreateReportBottomSheet
+        visible={isReportSheetOpen}
+        onClose={() => setIsReportSheetOpen(false)}
+        onSubmit={handleCreateReport}
+        currentAddress={
+          selectedAddressInfo?.label ||
+          (location ? "Minha localização atual (GPS)" : "São Paulo - SP")
+        }
+        currentCoordinates={selectedAddressInfo?.coords || currentCoords}
+      />
+
+      {/* ================= CARD DE CONFIRMAÇÃO DE DESTINO (TRAÇAR ROTA) ================= */}
+      {!isRouteMode && selectedAddressInfo && (
+        <View style={styles.destinationCardContainer}>
+          <View
+            style={[
+              styles.destinationCard,
+              {
+                backgroundColor: isDark ? colors.surface : "#FFFFFF",
+                borderColor: isDark ? colors.border : "#E2D9F3",
+              },
+            ]}
+          >
+            <View style={styles.destinationCardTextCol}>
+              <Text
+                style={[styles.destinationCardTitle, { color: colors.text }]}
+                numberOfLines={1}
+              >
+                {selectedAddressInfo.label.split(",")[0]}
+              </Text>
+              <Text
+                style={[styles.destinationCardSubtitle, { color: colors.textMuted }]}
+                numberOfLines={1}
+              >
+                {selectedAddressInfo.label.split(",").slice(1).join(", ").trim()}
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              style={[styles.routeActionBtn, { backgroundColor: colors.primaryPurple }]}
+              activeOpacity={0.85}
+              onPress={() =>
+                handleTriggerRouteCalculation(
+                  selectedAddressInfo.coords,
+                  selectedAddressInfo.label
+                )
+              }
+            >
+              <Ionicons name="navigate" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+              <Text style={styles.routeActionBtnText}>Traçar Rota</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.closeDestinationBtn}
+              onPress={handleClearSearch}
+              accessibilityLabel="Desmarcar local"
+            >
+              <Ionicons name="close" size={20} color={colors.textMuted} />
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* ================= BOTTOM SHEET OPÇÕES DE ROTA (IMAGEM 2) ================= */}
+      {isRouteMode && (
+        <RouteOptionsBottomSheet
+          routes={calculatedRoutes}
+          selectedRouteId={selectedRouteId}
+          onSelectRoute={(id) => setSelectedRouteId(id)}
+          loading={isCalculatingRoutes}
+          exceeds30Percent={routeComparison?.exceeds_30_percent}
         />
       )}
-    </SafeAreaView>
+
+      {/* ================= MODAL DE BUSCA EXPANDIDA COM RECENTES (IMAGEM 1) ================= */}
+      <AddressSearchModal
+        visible={isSearchModalOpen}
+        onClose={() => setIsSearchModalOpen(false)}
+        onSelectAddress={handleSelectSearchedAddress}
+        initialQuery={searchQuery}
+      />
+    </View>
+
+      {/* ================= BARRA INFERIOR PERSISTENTE (SOS SEMPRE ACESSÍVEL) ================= */ }
+  {
+    !isRouteMode && (
+      <BottomNavigation
+        onTabPress={(tab) => router.push(tab)}
+        onPanicPress={() => router.push("/emergency")}
+      />
+    )
+  }
+    </SafeAreaView >
   );
 }
 
