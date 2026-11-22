@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -7,23 +7,39 @@ import {
   ScrollView,
   TextInput,
   Platform,
-  Modal,
+  ActivityIndicator,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useAppTheme } from "../../../theme";
+import { addressService, AddressSuggestion } from "../../../services/api/addresses";
+
+export interface CreateReportData {
+  category: string;
+  description: string;
+  addressDetail: string;
+  period: string;
+  isAnonymous: boolean;
+  location: {
+    latitude: number;
+    longitude: number;
+    address: string;
+  };
+}
 
 export interface CreateReportBottomSheetProps {
   visible: boolean;
   onClose: () => void;
-  onSubmit: (data: any) => void;
+  onSubmit: (data: CreateReportData) => void;
   currentAddress?: string;
+  currentCoordinates?: { latitude: number; longitude: number };
 }
 
 export const CreateReportBottomSheet: React.FC<CreateReportBottomSheetProps> = ({
   visible,
   onClose,
   onSubmit,
-  currentAddress = "Endereço atual do mapa",
+  currentAddress = "São Paulo - SP",
+  currentCoordinates = { latitude: -23.5505, longitude: -46.6333 },
 }) => {
   const { colors, isDark } = useAppTheme();
 
@@ -32,6 +48,65 @@ export const CreateReportBottomSheet: React.FC<CreateReportBottomSheetProps> = (
   const [description, setDescription] = useState("");
   const [period, setPeriod] = useState("noite");
   const [isAnonymous, setIsAnonymous] = useState(true);
+
+  // Localização ativa do relato (permite à usuária alterar para onde o fato ocorreu - RF09)
+  const [selectedAddress, setSelectedAddress] = useState(currentAddress);
+  const [selectedCoords, setSelectedCoords] = useState(currentCoordinates);
+
+  // Busca e seleção de endereço alternativo
+  const [isEditingAddress, setIsEditingAddress] = useState(false);
+  const [addressSearchInput, setAddressSearchInput] = useState("");
+  const [suggestions, setSuggestions] = useState<AddressSuggestion[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+
+  useEffect(() => {
+    setSelectedAddress(currentAddress);
+    if (currentCoordinates) {
+      setSelectedCoords(currentCoordinates);
+    }
+  }, [currentAddress, currentCoordinates]);
+
+  // Debounce na busca de endereços dentro do modal
+  useEffect(() => {
+    if (!isEditingAddress || addressSearchInput.trim().length < 3) {
+      setSuggestions([]);
+      setIsSearching(false);
+      return;
+    }
+
+    setIsSearching(true);
+    const timer = setTimeout(async () => {
+      try {
+        const results = await addressService.getSuggestions(addressSearchInput, 4);
+        setSuggestions(results);
+      } catch {
+        setSuggestions([]);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [addressSearchInput, isEditingAddress]);
+
+  const handleSelectSuggestion = (suggestion: AddressSuggestion) => {
+    setSelectedAddress(suggestion.label);
+    setSelectedCoords({
+      latitude: suggestion.latitude,
+      longitude: suggestion.longitude,
+    });
+    setIsEditingAddress(false);
+    setAddressSearchInput("");
+    setSuggestions([]);
+  };
+
+  const handleResetToGps = () => {
+    setSelectedAddress(currentAddress);
+    setSelectedCoords(currentCoordinates);
+    setIsEditingAddress(false);
+    setAddressSearchInput("");
+    setSuggestions([]);
+  };
 
   if (!visible) return null;
 
@@ -57,20 +132,82 @@ export const CreateReportBottomSheet: React.FC<CreateReportBottomSheetProps> = (
         </View>
 
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-          {/* Endereço Selecionado */}
-          <Text style={styles.label}>Endereço</Text>
-          <View style={styles.fieldBox}>
-            <Ionicons name="location-outline" size={18} color="#4A3475" style={{ marginRight: 6 }} />
-            <Text style={styles.addressText} numberOfLines={1}>
-              {currentAddress}
-            </Text>
+          {/* Endereço Selecionado com opção de alterar (RF09) */}
+          <View style={styles.labelRow}>
+            <Text style={styles.label}>Local do incidente</Text>
+            {!isEditingAddress ? (
+              <TouchableOpacity
+                onPress={() => setIsEditingAddress(true)}
+                style={styles.changeAddressBtn}
+                accessibilityLabel="Alterar local do incidente"
+              >
+                <Ionicons name="create-outline" size={14} color="#EDE7F6" style={{ marginRight: 4 }} />
+                <Text style={styles.changeAddressText}>Alterar local</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                onPress={handleResetToGps}
+                style={styles.changeAddressBtn}
+                accessibilityLabel="Usar localização do GPS"
+              >
+                <Ionicons name="navigate-outline" size={14} color="#EDE7F6" style={{ marginRight: 4 }} />
+                <Text style={styles.changeAddressText}>Usar GPS</Text>
+              </TouchableOpacity>
+            )}
           </View>
+
+          {!isEditingAddress ? (
+            <View style={styles.fieldBox}>
+              <Ionicons name="location-outline" size={18} color="#4A3475" style={{ marginRight: 6 }} />
+              <Text style={styles.addressText} numberOfLines={2}>
+                {selectedAddress}
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.searchSection}>
+              <View style={styles.searchInputRow}>
+                <Ionicons name="search" size={16} color="#4A3475" style={{ marginRight: 6 }} />
+                <TextInput
+                  style={styles.addressSearchInput}
+                  placeholder="Digite rua, avenida ou praça..."
+                  placeholderTextColor="#7C6B98"
+                  value={addressSearchInput}
+                  onChangeText={setAddressSearchInput}
+                  autoFocus
+                />
+                {isSearching ? (
+                  <ActivityIndicator size="small" color="#4A3475" />
+                ) : (
+                  <TouchableOpacity onPress={() => setIsEditingAddress(false)}>
+                    <Ionicons name="close-circle" size={18} color="#8C7CA8" />
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {suggestions.length > 0 && (
+                <View style={styles.modalSuggestionsList}>
+                  {suggestions.map((item) => (
+                    <TouchableOpacity
+                      key={item.id}
+                      style={styles.modalSuggestionItem}
+                      onPress={() => handleSelectSuggestion(item)}
+                    >
+                      <Ionicons name="location-sharp" size={14} color="#6D4DA8" style={{ marginRight: 6 }} />
+                      <Text style={styles.modalSuggestionText} numberOfLines={1}>
+                        {item.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+            </View>
+          )}
 
           {/* Especificação do endereço */}
           <Text style={styles.label}>Especificação do endereço (opcional)</Text>
           <TextInput
             style={styles.inputBox}
-            placeholder="Ex.: em frente ao supermercado X"
+            placeholder="Ex.: em frente ao supermercado X, esquina com a rua Y"
             placeholderTextColor="#8C7CA8"
             value={addressDetail}
             onChangeText={setAddressDetail}
@@ -104,7 +241,7 @@ export const CreateReportBottomSheet: React.FC<CreateReportBottomSheetProps> = (
           <Text style={styles.label}>Descrição</Text>
           <TextInput
             style={[styles.inputBox, styles.textArea]}
-            placeholder="Escreva uma pequena descrição"
+            placeholder="Escreva uma pequena descrição do ocorrido"
             placeholderTextColor="#8C7CA8"
             multiline
             numberOfLines={3}
@@ -184,6 +321,11 @@ export const CreateReportBottomSheet: React.FC<CreateReportBottomSheetProps> = (
                   addressDetail,
                   period,
                   isAnonymous,
+                  location: {
+                    latitude: selectedCoords.latitude,
+                    longitude: selectedCoords.longitude,
+                    address: selectedAddress,
+                  },
                 });
                 onClose();
               }}
@@ -240,34 +382,33 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     color: "#FFFFFF",
   },
-  sosQuickBtn: {
-    backgroundColor: "#DC2626",
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    borderColor: "#FFFFFF",
-    elevation: 4,
-    shadowColor: "#DC2626",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.4,
-    shadowRadius: 4,
-  },
-  sosQuickText: {
-    color: "#FFFFFF",
-    fontSize: 12,
-    fontWeight: "900",
-    letterSpacing: 1,
-  },
   scrollContent: {
     paddingBottom: 24,
+  },
+  labelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 12,
+    marginBottom: 6,
   },
   label: {
     fontSize: 13,
     fontWeight: "600",
     color: "#E2D9F3",
-    marginTop: 12,
-    marginBottom: 6,
+  },
+  changeAddressBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    borderRadius: 6,
+    backgroundColor: "rgba(255, 255, 255, 0.15)",
+  },
+  changeAddressText: {
+    fontSize: 11,
+    color: "#FFFFFF",
+    fontWeight: "600",
   },
   fieldBox: {
     flexDirection: "row",
@@ -275,12 +416,57 @@ const styles = StyleSheet.create({
     backgroundColor: "#EDE7F6",
     borderRadius: 12,
     paddingHorizontal: 14,
-    height: 44,
+    minHeight: 44,
+    paddingVertical: 8,
   },
   addressText: {
-    fontSize: 14,
+    flex: 1,
+    fontSize: 13,
     color: "#4A3475",
     fontWeight: "500",
+  },
+  searchSection: {
+    backgroundColor: "#EDE7F6",
+    borderRadius: 12,
+    overflow: "hidden",
+  },
+  searchInputRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    height: 44,
+  },
+  addressSearchInput: {
+    flex: 1,
+    fontSize: 13,
+    color: "#37235E",
+    paddingVertical: 0,
+    ...Platform.select({
+      web: {
+        outlineStyle: "none",
+        outlineWidth: 0,
+        outlineColor: "transparent",
+        boxShadow: "none",
+      } as any,
+    }),
+  },
+  modalSuggestionsList: {
+    backgroundColor: "#F5F3FF",
+    borderTopWidth: 1,
+    borderTopColor: "#DDD6FE",
+  },
+  modalSuggestionItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#EDE7F6",
+  },
+  modalSuggestionText: {
+    flex: 1,
+    fontSize: 12,
+    color: "#4C1D95",
   },
   inputBox: {
     backgroundColor: "#EDE7F6",
@@ -298,6 +484,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
+    marginTop: 6,
   },
   pillButton: {
     backgroundColor: "rgba(255, 255, 255, 0.15)",

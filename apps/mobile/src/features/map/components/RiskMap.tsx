@@ -10,12 +10,14 @@ export interface RiskMapProps {
   center: Coordinates;
   zoom?: number;
   userLocation?: Coordinates | null;
+  selectedLocation?: Coordinates | null;
   mapStyle?: MapTileStyle;
   supportLocations?: SupportLocation[];
   riskZones?: RiskZoneFeature[];
   reports?: Report[];
   onSelectReport?: (report: Report) => void;
   onSelectSupportLocation?: (location: SupportLocation) => void;
+  onMapClick?: (coords: Coordinates) => void;
   interactive?: boolean;
 }
 
@@ -52,18 +54,22 @@ export const RiskMap: React.FC<RiskMapProps> = ({
   center,
   zoom = 15,
   userLocation,
+  selectedLocation,
   mapStyle = "clean",
   supportLocations = [],
   riskZones = [],
   reports = [],
   onSelectReport,
   onSelectSupportLocation,
+  onMapClick,
 }) => {
   const mapContainerRef = useRef<any>(null);
   const leafletMapInstanceRef = useRef<any>(null);
   const tileLayerRef = useRef<any>(null);
   const markersLayerRef = useRef<any>(null);
   const zonesLayerRef = useRef<any>(null);
+  const onMapClickRef = useRef(onMapClick);
+  onMapClickRef.current = onMapClick;
 
   useEffect(() => {
     if (Platform.OS !== "web") {
@@ -119,6 +125,15 @@ export const RiskMap: React.FC<RiskMapProps> = ({
 
         const markersLayer = L.layerGroup().addTo(map);
         const zonesLayer = L.layerGroup().addTo(map);
+
+        map.on("click", (e: any) => {
+          if (onMapClickRef.current && e?.latlng) {
+            onMapClickRef.current({
+              latitude: Number(e.latlng.lat),
+              longitude: Number(e.latlng.lng),
+            });
+          }
+        });
 
         leafletMapInstanceRef.current = map;
         tileLayerRef.current = tileLayer;
@@ -177,6 +192,50 @@ export const RiskMap: React.FC<RiskMapProps> = ({
           zIndexOffset: 1000,
         })
           .bindPopup("<b style='font-family: sans-serif; color: #7C3AED;'>Você está aqui</b>")
+          .addTo(markersLayer);
+      }
+
+      // Marcador de Ponto Selecionado / Endereço Pesquisado
+      if (selectedLocation) {
+        const selIcon = L_instance.divIcon({
+          className: "selected-pin-icon",
+          html: `<div style="
+            position: relative;
+            width: 32px;
+            height: 38px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            cursor: pointer;
+          ">
+            <div style="
+              width: 30px;
+              height: 30px;
+              background: #9333EA;
+              border-radius: 50% 50% 50% 0;
+              transform: rotate(-45deg);
+              border: 2px solid #FFFFFF;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              box-shadow: 0 4px 12px rgba(147, 51, 234, 0.45);
+            ">
+              <span style="
+                transform: rotate(45deg);
+                font-size: 15px;
+                display: block;
+              ">📍</span>
+            </div>
+          </div>`,
+          iconSize: [32, 38],
+          iconAnchor: [16, 36],
+        });
+
+        L_instance.marker([selectedLocation.latitude, selectedLocation.longitude], {
+          icon: selIcon,
+          zIndexOffset: 900,
+        })
+          .bindPopup("<b style='font-family: sans-serif; color: #9333EA;'>Local Selecionado</b>")
           .addTo(markersLayer);
       }
 
@@ -317,7 +376,7 @@ export const RiskMap: React.FC<RiskMapProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [center, zoom, userLocation, mapStyle, supportLocations, riskZones, reports]);
+  }, [center, zoom, userLocation, selectedLocation, mapStyle, supportLocations, riskZones, reports]);
 
   if (Platform.OS !== "web") {
     return (
