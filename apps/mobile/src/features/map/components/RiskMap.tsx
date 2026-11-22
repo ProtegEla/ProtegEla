@@ -6,11 +6,23 @@ import { colors } from "../../../theme/colors";
 
 export type MapTileStyle = "clean" | "clean_dark" | "streets" | "satellite";
 
+export interface MapRoutePolyline {
+  id: string;
+  coordinates: Coordinates[];
+  color?: string;
+  weight?: number;
+  opacity?: number;
+  isSelected?: boolean;
+}
+
 export interface RiskMapProps {
   center: Coordinates;
   zoom?: number;
   userLocation?: Coordinates | null;
   selectedLocation?: Coordinates | null;
+  destinationLocation?: Coordinates | null;
+  routes?: MapRoutePolyline[];
+  selectedRouteId?: string | null;
   mapStyle?: MapTileStyle;
   supportLocations?: SupportLocation[];
   riskZones?: RiskZoneFeature[];
@@ -55,6 +67,9 @@ export const RiskMap: React.FC<RiskMapProps> = ({
   zoom = 15,
   userLocation,
   selectedLocation,
+  destinationLocation,
+  routes = [],
+  selectedRouteId,
   mapStyle = "clean",
   supportLocations = [],
   riskZones = [],
@@ -68,6 +83,7 @@ export const RiskMap: React.FC<RiskMapProps> = ({
   const tileLayerRef = useRef<any>(null);
   const markersLayerRef = useRef<any>(null);
   const zonesLayerRef = useRef<any>(null);
+  const routesLayerRef = useRef<any>(null);
   const onMapClickRef = useRef(onMapClick);
   onMapClickRef.current = onMapClick;
 
@@ -125,6 +141,7 @@ export const RiskMap: React.FC<RiskMapProps> = ({
 
         const markersLayer = L.layerGroup().addTo(map);
         const zonesLayer = L.layerGroup().addTo(map);
+        const routesLayer = L.layerGroup().addTo(map);
 
         map.on("click", (e: any) => {
           if (onMapClickRef.current && e?.latlng) {
@@ -139,6 +156,7 @@ export const RiskMap: React.FC<RiskMapProps> = ({
         tileLayerRef.current = tileLayer;
         markersLayerRef.current = markersLayer;
         zonesLayerRef.current = zonesLayer;
+        routesLayerRef.current = routesLayer;
       } else {
         // Atualiza a posição da visualização com animação suave
         leafletMapInstanceRef.current.flyTo([center.latitude, center.longitude], zoom, {
@@ -154,11 +172,15 @@ export const RiskMap: React.FC<RiskMapProps> = ({
       const L_instance = (window as any).L;
       const markersLayer = markersLayerRef.current;
       const zonesLayer = zonesLayerRef.current;
+      const routesLayer = routesLayerRef.current;
 
       if (!markersLayer || !zonesLayer) return;
 
       markersLayer.clearLayers();
       zonesLayer.clearLayers();
+      if (routesLayer) {
+        routesLayer.clearLayers();
+      }
 
       // Marcador da Usuária (Ponto roxo/azul pulsante de alta visibilidade)
       if (userLocation) {
@@ -237,6 +259,102 @@ export const RiskMap: React.FC<RiskMapProps> = ({
         })
           .bindPopup("<b style='font-family: sans-serif; color: #9333EA;'>Local Selecionado</b>")
           .addTo(markersLayer);
+      }
+
+      // Marcador de Destino no Modo Rota (Estilo Imagem 2 - pino roxo com centro branco)
+      if (destinationLocation) {
+        const destIcon = L_instance.divIcon({
+          className: "destination-pin-icon",
+          html: `<div style="
+            position: relative;
+            width: 34px;
+            height: 42px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+          ">
+            <div style="
+              width: 32px;
+              height: 32px;
+              background: #8055B5;
+              border-radius: 50% 50% 50% 0;
+              transform: rotate(-45deg);
+              border: 3px solid #FFFFFF;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              box-shadow: 0 4px 14px rgba(128, 85, 181, 0.55);
+            ">
+              <div style="
+                width: 10px;
+                height: 10px;
+                background: #FFFFFF;
+                border-radius: 50%;
+              "></div>
+            </div>
+          </div>`,
+          iconSize: [34, 42],
+          iconAnchor: [17, 40],
+        });
+
+        L_instance.marker([destinationLocation.latitude, destinationLocation.longitude], {
+          icon: destIcon,
+          zIndexOffset: 950,
+        })
+          .bindPopup("<b style='font-family: sans-serif; color: #8055B5;'>Destino da Rota</b>")
+          .addTo(markersLayer);
+      }
+
+      // Renderizar Trajetos de Rotas no Mapa (Polylines)
+      if (routes && routes.length > 0 && routesLayer) {
+        let activePolylineToFit: any = null;
+
+        // Renderiza primeiro as rotas não selecionadas (em segundo plano)
+        routes
+          .filter((r) => r.id !== selectedRouteId && !r.isSelected)
+          .forEach((route) => {
+            const latLngs = route.coordinates.map((c) => [c.latitude, c.longitude]);
+            if (latLngs.length >= 2) {
+              L_instance.polyline(latLngs, {
+                color: "#A8A29E",
+                weight: route.weight || 3,
+                opacity: route.opacity || 0.45,
+                lineCap: "round",
+                lineJoin: "round",
+              }).addTo(routesLayer);
+            }
+          });
+
+        // Renderiza a rota ativa selecionada com destaque (topo do z-index)
+        const activeRoute =
+          routes.find((r) => r.id === selectedRouteId) ||
+          routes.find((r) => r.isSelected) ||
+          routes[0];
+
+        if (activeRoute) {
+          const latLngs = activeRoute.coordinates.map((c) => [c.latitude, c.longitude]);
+          if (latLngs.length >= 2) {
+            activePolylineToFit = L_instance.polyline(latLngs, {
+              color: activeRoute.color || "#8055B5",
+              weight: activeRoute.weight || 5,
+              opacity: activeRoute.opacity || 0.95,
+              lineCap: "round",
+              lineJoin: "round",
+            }).addTo(routesLayer);
+          }
+        }
+
+        // Enquadra a visão do mapa para mostrar a rota completa suavemente
+        if (activePolylineToFit) {
+          try {
+            leafletMapInstanceRef.current.fitBounds(activePolylineToFit.getBounds(), {
+              padding: [70, 70],
+              maxZoom: 17,
+            });
+          } catch {
+            // Ignora falha de bounds se o mapa estiver redimensionando
+          }
+        }
       }
 
       // Renderizar Zonas de Risco (Círculos e Polígonos Vetoriais)
@@ -376,7 +494,19 @@ export const RiskMap: React.FC<RiskMapProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [center, zoom, userLocation, selectedLocation, mapStyle, supportLocations, riskZones, reports]);
+  }, [
+    center,
+    zoom,
+    userLocation,
+    selectedLocation,
+    destinationLocation,
+    routes,
+    selectedRouteId,
+    mapStyle,
+    supportLocations,
+    riskZones,
+    reports,
+  ]);
 
   if (Platform.OS !== "web") {
     return (
