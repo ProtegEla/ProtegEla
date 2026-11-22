@@ -3,6 +3,7 @@ import { View, StyleSheet, Platform, ActivityIndicator, Text } from "react-nativ
 import { Coordinates, SupportLocation, RiskZoneFeature } from "../types";
 import { Report } from "../../../types/report";
 import { colors } from "../../../theme/colors";
+import { useAppTheme } from "../../../theme";
 
 export type MapTileStyle = "clean" | "clean_dark" | "streets" | "satellite";
 
@@ -78,6 +79,7 @@ export const RiskMap: React.FC<RiskMapProps> = ({
   onSelectSupportLocation,
   onMapClick,
 }) => {
+  const { isDark } = useAppTheme();
   const mapContainerRef = useRef<any>(null);
   const leafletMapInstanceRef = useRef<any>(null);
   const tileLayerRef = useRef<any>(null);
@@ -170,9 +172,16 @@ export const RiskMap: React.FC<RiskMapProps> = ({
       }
 
       const L_instance = (window as any).L;
+      if (!L_instance) return;
+
       const markersLayer = markersLayerRef.current;
       const zonesLayer = zonesLayerRef.current;
-      const routesLayer = routesLayerRef.current;
+      let routesLayer = routesLayerRef.current;
+
+      if (!routesLayer && leafletMapInstanceRef.current) {
+        routesLayer = L_instance.layerGroup().addTo(leafletMapInstanceRef.current);
+        routesLayerRef.current = routesLayer;
+      }
 
       if (!markersLayer || !zonesLayer) return;
 
@@ -305,27 +314,29 @@ export const RiskMap: React.FC<RiskMapProps> = ({
           .addTo(markersLayer);
       }
 
-      // Renderizar Trajetos de Rotas no Mapa (Polylines em Azul com Destaque de Navegação)
+      // Renderizar Trajetos de Rotas no Mapa (Polylines em Roxo Conforme o Tema)
       if (routes && routes.length > 0 && routesLayer) {
         let activePolylineToFit: any = null;
 
-        // Renderiza primeiro as rotas alternativas não selecionadas (em segundo plano, cinza-azulado suave)
+        // Renderiza primeiro as rotas alternativas não selecionadas (em segundo plano, lavanda suave)
         routes
           .filter((r) => r.id !== selectedRouteId && !r.isSelected)
           .forEach((route) => {
             const latLngs = route.coordinates.map((c) => [c.latitude, c.longitude]);
             if (latLngs.length >= 2) {
               L_instance.polyline(latLngs, {
-                color: "#94A3B8",
+                color: isDark ? "#6D28D9" : "#C4B5FD",
                 weight: route.weight || 4,
-                opacity: 0.65,
+                opacity: 0.7,
                 lineCap: "round",
                 lineJoin: "round",
               }).addTo(routesLayer);
             }
           });
 
-        // Renderiza a rota ativa selecionada com destaque máximo (casing + azul vibrante #2563EB)
+        // Renderiza a rota ativa selecionada com destaque máximo:
+        // No tema claro: roxo escuro (#5B21B6)
+        // No tema escuro: roxo vibrante (#C4A5F3)
         const activeRoute =
           routes.find((r) => r.id === selectedRouteId) ||
           routes.find((r) => r.isSelected) ||
@@ -334,18 +345,21 @@ export const RiskMap: React.FC<RiskMapProps> = ({
         if (activeRoute) {
           const latLngs = activeRoute.coordinates.map((c) => [c.latitude, c.longitude]);
           if (latLngs.length >= 2) {
+            const coreColor = isDark ? "#C4A5F3" : "#5B21B6";
+            const casingColor = isDark ? "#1E1630" : "#2E1065";
+
             // Casing externo escuro para contraste perfeito contra as ruas
             L_instance.polyline(latLngs, {
-              color: "#1E3A8A",
+              color: casingColor,
               weight: 8,
-              opacity: 0.85,
+              opacity: 0.9,
               lineCap: "round",
               lineJoin: "round",
             }).addTo(routesLayer);
 
-            // Traçado principal azul vibrante de GPS / navegação
+            // Traçado principal roxo
             activePolylineToFit = L_instance.polyline(latLngs, {
-              color: "#2563EB",
+              color: coreColor,
               weight: 5,
               opacity: 1.0,
               lineCap: "round",
@@ -354,8 +368,13 @@ export const RiskMap: React.FC<RiskMapProps> = ({
           }
         }
 
+        // Traz as rotas para a frente
+        if (typeof (routesLayer as any).bringToFront === "function") {
+          (routesLayer as any).bringToFront();
+        }
+
         // Enquadra a visão do mapa para mostrar a rota completa suavemente, respeitando a barra superior e o bottom sheet inferior
-        if (activePolylineToFit) {
+        if (activePolylineToFit && leafletMapInstanceRef.current) {
           try {
             leafletMapInstanceRef.current.fitBounds(activePolylineToFit.getBounds(), {
               paddingTopLeft: [70, 40],

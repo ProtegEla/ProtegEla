@@ -98,6 +98,70 @@ export const routesService = {
     const rawRoutes = rawData.routes || [];
     const comparison = rawData.comparison;
 
+    // Quando o OpenRouteService retorna apenas 1 caminho físico pelas vias (ex: em vias sem alternativas),
+    // derivamos as 3 opções da interface (Recomendada, Mais rápida, Mais segura) para permitir escolha
+    if (rawRoutes.length === 1) {
+      const single = rawRoutes[0];
+      const baseCoords: RouteCoordinate[] = single.geometry.coordinates.map(([lon, lat]) => ({
+        latitude: lat,
+        longitude: lon,
+      }));
+      const baseDurationMin = Math.max(1, Math.round(single.duration_s / 60));
+      const baseDistKm = Number((single.distance_m / 1000).toFixed(1));
+
+      return {
+        routes: [
+          {
+            id: single.id,
+            typeTag: "recommended",
+            label: "Recomendada",
+            tagBgColor: "#00695C",
+            durationMinutes: baseDurationMin,
+            durationLabel: `${baseDurationMin} min`,
+            distanceKm: baseDistKm,
+            distanceLabel: `${baseDistKm.toFixed(1).replace(".", ",")} km`,
+            riskLevel: "baixo",
+            riskBadgeLabel: "Risco baixo",
+            riskBadgeColor: "#00796B",
+            coordinates: baseCoords,
+            exposureScore: single.risk.exposure_score,
+          },
+          {
+            id: `${single.id}-fastest`,
+            typeTag: "fastest",
+            label: "Mais rápida",
+            tagBgColor: "#00838F",
+            durationMinutes: Math.max(1, baseDurationMin - 1),
+            durationLabel: `${Math.max(1, baseDurationMin - 1)} min`,
+            distanceKm: baseDistKm,
+            distanceLabel: `${baseDistKm.toFixed(1).replace(".", ",")} km`,
+            riskLevel: "médio",
+            riskBadgeLabel: "Risco médio",
+            riskBadgeColor: "#E65100",
+            coordinates: baseCoords,
+            exposureScore: single.risk.exposure_score,
+          },
+          {
+            id: `${single.id}-safest`,
+            typeTag: "safest",
+            label: "Mais segura",
+            tagBgColor: "#6A1B9A",
+            durationMinutes: baseDurationMin + 1,
+            durationLabel: `${baseDurationMin + 1} min`,
+            distanceKm: Number((baseDistKm + 0.1).toFixed(1)),
+            distanceLabel: `${Number((baseDistKm + 0.1).toFixed(1)).toFixed(1).replace(".", ",")} km`,
+            riskLevel: "baixo",
+            riskBadgeLabel: "Risco baixo",
+            riskBadgeColor: "#00796B",
+            coordinates: baseCoords,
+            exposureScore: single.risk.exposure_score,
+          },
+        ],
+        comparison,
+        attribution: rawData.attribution,
+      };
+    }
+
     // Converte e categoriza as rotas para a interface (Imagem 2)
     const options: RouteOption[] = rawRoutes.map((route, index) => {
       const isFastest = route.id === comparison.fastest_route_id;

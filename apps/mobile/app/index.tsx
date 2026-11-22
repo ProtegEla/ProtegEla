@@ -492,38 +492,40 @@ export default function HomeScreen() {
           </View>
         )}
 
-      {/* ================= BOTÕES FLUTUANTES (FABS À DIREITA) ================= */}
-      <View style={styles.fabsContainer}>
-        {/* Botão Recentralizar (Alvo / Mira GPS) */}
-        <TouchableOpacity
-          style={[
-            styles.fabSmall,
-            { backgroundColor: isDark ? "#241B38" : "#EDE9F5" },
-          ]}
-          activeOpacity={0.8}
-          onPress={handleRecentralizeGps}
-          accessibilityLabel="Recentralizar mapa"
-        >
-          <MaterialCommunityIcons
-            name="crosshairs-gps"
-            size={24}
-            color={colors.primaryPurple}
-          />
-        </TouchableOpacity>
+        {/* ================= BOTÕES FLUTUANTES (FABS À DIREITA) ================= */}
+        {!isRouteMode && (
+          <View style={styles.fabsContainer}>
+            {/* Botão Recentralizar (Alvo / Mira GPS) */}
+            <TouchableOpacity
+              style={[
+                styles.fabSmall,
+                { backgroundColor: isDark ? "#241B38" : "#EDE9F5" },
+              ]}
+              activeOpacity={0.8}
+              onPress={handleRecentralizeGps}
+              accessibilityLabel="Recentralizar mapa"
+            >
+              <MaterialCommunityIcons
+                name="crosshairs-gps"
+                size={24}
+                color={colors.primaryPurple}
+              />
+            </TouchableOpacity>
 
-        {/* Botão Adicionar Relato (Roxo + Triângulo) */}
-        <TouchableOpacity
-          style={[styles.fabPrimary, { backgroundColor: colors.primaryPurple }]}
-          activeOpacity={0.85}
-          onPress={() => {
-            setIsReportSheetOpen(true);
-          }}
-          accessibilityLabel="Adicionar relato de risco"
-        >
-          <Ionicons name="warning" size={22} color="#FFFFFF" />
-          <Text style={styles.fabPlusSign}>+</Text>
-        </TouchableOpacity>
-      </View>
+            {/* Botão Adicionar Relato (Roxo + Triângulo) */}
+            <TouchableOpacity
+              style={[styles.fabPrimary, { backgroundColor: colors.primaryPurple }]}
+              activeOpacity={0.85}
+              onPress={() => {
+                setIsReportSheetOpen(true);
+              }}
+              accessibilityLabel="Adicionar relato de risco"
+            >
+              <Ionicons name="warning" size={22} color="#FFFFFF" />
+              <Text style={styles.fabPlusSign}>+</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
       {/* ================= PAINEL LATERAL / DRAWER DO PERFIL ================= */}
       <Modal

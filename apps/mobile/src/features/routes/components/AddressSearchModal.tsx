@@ -86,15 +86,16 @@ export const AddressSearchModal: React.FC<AddressSearchModalProps> = ({
     return { title, subtitle };
   };
 
+  if (!visible) return null;
+
   return (
-    <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
-      <SafeAreaView
-        style={[
-          styles.safeArea,
-          { backgroundColor: isDark ? colors.screenBackground : colors.screenBackground },
-        ]}
-      >
-        <View style={styles.container}>
+    <View
+      style={[
+        styles.fullScreenOverlay,
+        { backgroundColor: isDark ? colors.screenBackground : colors.screenBackground },
+      ]}
+    >
+      <View style={styles.container}>
           {/* Barra Superior de Busca */}
           <View style={styles.searchBarRow}>
             <View
@@ -265,14 +266,18 @@ export const AddressSearchModal: React.FC<AddressSearchModalProps> = ({
             </View>
           )}
         </View>
-      </SafeAreaView>
-    </Modal>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
+  fullScreenOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 50,
   },
   container: {
     flex: 1,
