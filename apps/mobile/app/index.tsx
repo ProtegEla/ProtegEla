@@ -1052,8 +1052,8 @@ const styles = StyleSheet.create({
   // Card de confirmação de destino antes do modo rota
   destinationCardContainer: {
     position: "absolute",
-    // Encosta acima da BottomNavigation (~72px) com 8px de margem
-    bottom: 80,
+    // Mesmo nível dos FABs, na borda inferior do mapArea (antes da navbar)
+    bottom: theme.spacing.md,
     left: 16,
     right: 16,
     zIndex: 25,
