@@ -270,6 +270,8 @@ export default function HomeScreen() {
   };
 
   const handleMapClick = (coords: Coordinates) => {
+    // Em modo rota, não permitir novo pino — a rota já está sendo calculada
+    if (isRouteMode) return;
     const label = `Ponto no mapa (${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)})`;
     setSelectedAddressInfo({ label, coords });
     setMapCenter(coords);
@@ -700,6 +702,24 @@ export default function HomeScreen() {
               </Text>
             </View>
 
+            {/* Botão de Relato ao lado do Traçar Rota */}
+            <TouchableOpacity
+              style={[
+                styles.reportIconBtn,
+                {
+                  backgroundColor: isDark ? colors.inputBackground : "#F3EEF9",
+                  borderColor: isDark ? colors.border : "#D8CCF0",
+                },
+              ]}
+              activeOpacity={0.8}
+              onPress={() => {
+                setIsReportSheetOpen(true);
+              }}
+              accessibilityLabel="Relatar ocorrência neste local"
+            >
+              <Ionicons name="warning" size={18} color={colors.primaryPurple} />
+            </TouchableOpacity>
+
             <TouchableOpacity
               style={[styles.routeActionBtn, { backgroundColor: colors.primaryPurple }]}
               activeOpacity={0.85}
@@ -1032,7 +1052,8 @@ const styles = StyleSheet.create({
   // Card de confirmação de destino antes do modo rota
   destinationCardContainer: {
     position: "absolute",
-    bottom: 84,
+    // Encosta acima da BottomNavigation (~72px) com 8px de margem
+    bottom: 80,
     left: 16,
     right: 16,
     zIndex: 25,
@@ -1077,5 +1098,14 @@ const styles = StyleSheet.create({
   },
   closeDestinationBtn: {
     padding: 6,
+  },
+  reportIconBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 1,
+    marginRight: 6,
   },
 });
