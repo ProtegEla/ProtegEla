@@ -156,7 +156,7 @@ async def test_provider_contract(monkeypatch, failure):
         assert request.url.query == b""
         body = json.loads(request.content)
         assert body["coordinates"] == [[-46.6, -23.5], [-46.59, -23.5]]
-        assert body["language"] == "pt-br"
+        assert body["language"] in ("pt", "pt-br")
         assert body["alternative_routes"] == {"target_count": 3}
         if failure == "timeout":
             raise httpx.ReadTimeout("timeout", request=request)

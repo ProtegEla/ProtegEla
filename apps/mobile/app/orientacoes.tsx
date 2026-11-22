@@ -10,6 +10,8 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { BottomNavigation } from '../src/components/ui/BottomNavigation';
 
 type Props = {
   onClose: () => void;
@@ -73,7 +75,7 @@ export default function GuidanceScreen({ onClose }: Props) {
                 pressed && styles.pressed,
               ]}
             >
-              <Text style={styles.closeIcon}>X</Text>
+              <Ionicons name="close" size={24} color="#FFFFFF" />
             </Pressable>
           </View>
 
@@ -138,6 +140,16 @@ export default function GuidanceScreen({ onClose }: Props) {
           </View>
         </View>
       </ScrollView>
+
+      {/* Barra Inferior Persistente com Botão de Emergência (RF10, RF11, RF12, RF14) */}
+      <BottomNavigation
+        activeTab="orientacoes"
+        onTabPress={(tab) => {
+          if (tab === 'orientacoes') return;
+          router.push(tab === 'delegacias' ? '/delegacias' : tab === 'telefones' ? '/telefones' : '/');
+        }}
+        onPanicPress={() => router.push('/emergency')}
+      />
     </SafeAreaView>
   );
 }
