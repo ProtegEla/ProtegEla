@@ -192,5 +192,5 @@ class RouteRiskEvaluator:
                     RouteRisk(status="evaluated", exposure_score=score)
                     for score in scores
                 ]
-        except (SQLAlchemyError, ExternalServiceException, TimeoutError, ValueError):
+        except (SQLAlchemyError, ExternalServiceException, TimeoutError, ValueError, Exception):
             return [RouteRisk() for _ in routes]

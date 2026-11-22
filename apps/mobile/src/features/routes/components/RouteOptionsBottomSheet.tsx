@@ -115,13 +115,13 @@ export const RouteOptionsBottomSheet: React.FC<RouteOptionsBottomSheetProps> = (
 const styles = StyleSheet.create({
   container: {
     position: "absolute",
-    bottom: 0,
+    bottom: 72,
     left: 0,
     right: 0,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    paddingTop: 16,
-    paddingBottom: 28,
+    paddingTop: 14,
+    paddingBottom: 16,
     paddingHorizontal: 16,
     borderTopWidth: 1,
     shadowColor: "#000",

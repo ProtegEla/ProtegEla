@@ -305,27 +305,27 @@ export const RiskMap: React.FC<RiskMapProps> = ({
           .addTo(markersLayer);
       }
 
-      // Renderizar Trajetos de Rotas no Mapa (Polylines)
+      // Renderizar Trajetos de Rotas no Mapa (Polylines em Azul com Destaque de Navegação)
       if (routes && routes.length > 0 && routesLayer) {
         let activePolylineToFit: any = null;
 
-        // Renderiza primeiro as rotas não selecionadas (em segundo plano)
+        // Renderiza primeiro as rotas alternativas não selecionadas (em segundo plano, cinza-azulado suave)
         routes
           .filter((r) => r.id !== selectedRouteId && !r.isSelected)
           .forEach((route) => {
             const latLngs = route.coordinates.map((c) => [c.latitude, c.longitude]);
             if (latLngs.length >= 2) {
               L_instance.polyline(latLngs, {
-                color: "#A8A29E",
-                weight: route.weight || 3,
-                opacity: route.opacity || 0.45,
+                color: "#94A3B8",
+                weight: route.weight || 4,
+                opacity: 0.65,
                 lineCap: "round",
                 lineJoin: "round",
               }).addTo(routesLayer);
             }
           });
 
-        // Renderiza a rota ativa selecionada com destaque (topo do z-index)
+        // Renderiza a rota ativa selecionada com destaque máximo (casing + azul vibrante #2563EB)
         const activeRoute =
           routes.find((r) => r.id === selectedRouteId) ||
           routes.find((r) => r.isSelected) ||
@@ -334,22 +334,33 @@ export const RiskMap: React.FC<RiskMapProps> = ({
         if (activeRoute) {
           const latLngs = activeRoute.coordinates.map((c) => [c.latitude, c.longitude]);
           if (latLngs.length >= 2) {
+            // Casing externo escuro para contraste perfeito contra as ruas
+            L_instance.polyline(latLngs, {
+              color: "#1E3A8A",
+              weight: 8,
+              opacity: 0.85,
+              lineCap: "round",
+              lineJoin: "round",
+            }).addTo(routesLayer);
+
+            // Traçado principal azul vibrante de GPS / navegação
             activePolylineToFit = L_instance.polyline(latLngs, {
-              color: activeRoute.color || "#8055B5",
-              weight: activeRoute.weight || 5,
-              opacity: activeRoute.opacity || 0.95,
+              color: "#2563EB",
+              weight: 5,
+              opacity: 1.0,
               lineCap: "round",
               lineJoin: "round",
             }).addTo(routesLayer);
           }
         }
 
-        // Enquadra a visão do mapa para mostrar a rota completa suavemente
+        // Enquadra a visão do mapa para mostrar a rota completa suavemente, respeitando a barra superior e o bottom sheet inferior
         if (activePolylineToFit) {
           try {
             leafletMapInstanceRef.current.fitBounds(activePolylineToFit.getBounds(), {
-              padding: [70, 70],
-              maxZoom: 17,
+              paddingTopLeft: [70, 40],
+              paddingBottomRight: [40, 260],
+              maxZoom: 16,
             });
           } catch {
             // Ignora falha de bounds se o mapa estiver redimensionando
