@@ -9,6 +9,7 @@ import {
   Modal,
   ScrollView,
   Platform,
+  ActivityIndicator,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
@@ -21,9 +22,10 @@ import {
   DEFAULT_SP_COORDINATES,
 } from "../src/features/map/hooks/useCurrentLocation";
 import { supportLocationsService } from "../src/services/api/supportLocations";
-import { SupportLocation, RiskZoneFeature } from "../src/features/map/types";
+import { SupportLocation, RiskZoneFeature, Coordinates } from "../src/features/map/types";
 import { Report, ReportCategory } from "../src/types/report";
 import { CreateReportBottomSheet } from "../src/features/reports/components/CreateReportBottomSheet";
+import { addressService, AddressSuggestion } from "../src/services/api/addresses";
 
 /**
  * Tela Principal / Home do ProtegEla (RF03, RF05, RF10, RF12, RF14).
@@ -64,6 +66,123 @@ export default function HomeScreen() {
   const { location, refreshLocation } = useCurrentLocation();
   const currentCoords = location || DEFAULT_SP_COORDINATES;
 
+  // Centro e Zoom reativos do Mapa
+  const [mapCenter, setMapCenter] = useState<Coordinates>(currentCoords);
+  const [mapZoom, setMapZoom] = useState<number>(16);
+
+  // Endereço selecionado ou ponto de foco ativo (RF09)
+  const [selectedAddressInfo, setSelectedAddressInfo] = useState<{
+    label: string;
+    coords: Coordinates;
+  } | null>(null);
+
+  // Busca e Autocomplete de Endereços
+  const [searchQuery, setSearchQuery] = useState("");
+  const [suggestions, setSuggestions] = useState<AddressSuggestion[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+
+  // Relatos em memória temporários criados pela usuária nesta sessão de testes
+  const [sessionReports, setSessionReports] = useState<Report[]>([]);
+
+  // Sincroniza centro inicial quando obtiver localização GPS real
+  useEffect(() => {
+    if (location && !selectedAddressInfo) {
+      setMapCenter(location);
+    }
+  }, [location, selectedAddressInfo]);
+
+  // Debounce na consulta de sugestões de endereços (350ms)
+  useEffect(() => {
+    if (searchQuery.trim().length < 3) {
+      setSuggestions([]);
+      setIsSearching(false);
+      return;
+    }
+
+    setIsSearching(true);
+    const timer = setTimeout(async () => {
+      try {
+        const results = await addressService.getSuggestions(searchQuery, 5);
+        setSuggestions(results);
+        setShowSuggestions(true);
+      } catch {
+        setSuggestions([]);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  const handleSelectSuggestion = (item: AddressSuggestion) => {
+    setSearchQuery(item.label);
+    const coords: Coordinates = { latitude: item.latitude, longitude: item.longitude };
+    setSelectedAddressInfo({ label: item.label, coords });
+    setMapCenter(coords);
+    setMapZoom(17);
+    setShowSuggestions(false);
+  };
+
+  const handleClearSearch = () => {
+    setSearchQuery("");
+    setSuggestions([]);
+    setShowSuggestions(false);
+    setSelectedAddressInfo(null);
+    setMapCenter(location || DEFAULT_SP_COORDINATES);
+    setMapZoom(16);
+  };
+
+  const handleRecentralizeGps = () => {
+    refreshLocation();
+    setSelectedAddressInfo(null);
+    setSearchQuery("");
+    setShowSuggestions(false);
+    setMapCenter(location || DEFAULT_SP_COORDINATES);
+    setMapZoom(16);
+  };
+
+  const handleMapClick = (coords: Coordinates) => {
+    const label = `Ponto no mapa (${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)})`;
+    setSelectedAddressInfo({ label, coords });
+    setMapCenter(coords);
+    setSearchQuery(label);
+    setShowSuggestions(false);
+  };
+
+  const handleCreateReport = (data: any) => {
+    const reportCoords = data.location?.latitude
+      ? { latitude: data.location.latitude, longitude: data.location.longitude }
+      : (selectedAddressInfo?.coords || currentCoords);
+
+    const newReport: Report = {
+      id: `temp-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      category: data.category as any,
+      description: data.description
+        ? `${data.description}${data.addressDetail ? ` (${data.addressDetail})` : ""}`
+        : data.addressDetail || "",
+      location: {
+        latitude: reportCoords.latitude,
+        longitude: reportCoords.longitude,
+        address_reference: data.location?.address || selectedAddressInfo?.label || "",
+      },
+      incident_date: new Date().toISOString().split("T")[0],
+      incident_period: data.period as any,
+      is_anonymous: Boolean(data.isAnonymous),
+      confirmations_count: 1,
+      abuse_reports_count: 0,
+      is_hidden: false,
+      created_at: new Date().toISOString(),
+      author_username: data.isAnonymous ? undefined : (user?.nickname || "Você"),
+    };
+
+    setSessionReports((prev) => [newReport, ...prev]);
+    // Recentraliza no local onde o relato foi criado para visualização imediata
+    setMapCenter(reportCoords);
+    setMapZoom(17);
+  };
+
   // Estilo do mapa reativo ao tema da aplicação (claro vs escuro)
   const mapStyle: MapTileStyle = isDark ? "clean_dark" : "clean";
 
@@ -86,8 +205,8 @@ export default function HomeScreen() {
       const a =
         Math.sin(dLat / 2) ** 2 +
         Math.cos((lat1 * Math.PI) / 180) *
-          Math.cos((lat2 * Math.PI) / 180) *
-          Math.sin(dLon / 2) ** 2;
+        Math.cos((lat2 * Math.PI) / 180) *
+        Math.sin(dLon / 2) ** 2;
       return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     },
     []
@@ -145,35 +264,103 @@ export default function HomeScreen() {
           ]}
         >
           <RiskMap
-            center={currentCoords}
+            center={mapCenter}
+            zoom={mapZoom}
             userLocation={location}
+            selectedLocation={selectedAddressInfo?.coords}
             mapStyle={mapStyle}
             supportLocations={supportLocations}
-            zoom={16}
+            reports={sessionReports}
+            onMapClick={handleMapClick}
           />
         </View>
 
         {/* ================= BARRA SUPERIOR (BUSCA + AÇÃO CONFORME ESTADO) ================= */}
         <View style={styles.topBar}>
-          <View
-            style={[
-              styles.searchPill,
-              {
-                backgroundColor: isDark ? "#241B38" : "#EDE9F5",
-              },
-            ]}
-          >
-            <Ionicons
-              name="search"
-              size={18}
-              color={colors.primaryPurple}
-              style={styles.searchIcon}
-            />
-            <TextInput
-              placeholder="Buscar um endereço"
-              placeholderTextColor={colors.textMuted}
-              style={[styles.searchInput, { color: colors.text }]}
-            />
+          <View style={styles.searchWrapper}>
+            <View
+              style={[
+                styles.searchPill,
+                {
+                  backgroundColor: isDark ? "#241B38" : "#EDE9F5",
+                },
+              ]}
+            >
+              <Ionicons
+                name="search"
+                size={18}
+                color={colors.primaryPurple}
+                style={styles.searchIcon}
+              />
+              <TextInput
+                placeholder="Buscar um endereço"
+                placeholderTextColor={colors.textMuted}
+                style={[styles.searchInput, { color: colors.text }]}
+                value={searchQuery}
+                onChangeText={(text) => {
+                  setSearchQuery(text);
+                  if (text.length >= 3) {
+                    setShowSuggestions(true);
+                  }
+                }}
+                onFocus={() => {
+                  if (suggestions.length > 0) setShowSuggestions(true);
+                }}
+              />
+              {isSearching ? (
+                <ActivityIndicator
+                  size="small"
+                  color={colors.primaryPurple}
+                  style={{ marginRight: 6 }}
+                />
+              ) : searchQuery.length > 0 ? (
+                <TouchableOpacity
+                  onPress={handleClearSearch}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityLabel="Limpar busca"
+                  style={{ marginRight: 4 }}
+                >
+                  <Ionicons name="close-circle" size={18} color={colors.textMuted} />
+                </TouchableOpacity>
+              ) : null}
+            </View>
+
+            {/* Dropdown de Sugestões de Endereço */}
+            {showSuggestions && suggestions.length > 0 && (
+              <View
+                style={[
+                  styles.suggestionsDropdown,
+                  {
+                    backgroundColor: isDark ? "#241B38" : "#FFFFFF",
+                    borderColor: isDark ? "#3D2F5A" : "#E2E8F0",
+                  },
+                ]}
+              >
+                {suggestions.map((item) => (
+                  <TouchableOpacity
+                    key={item.id}
+                    style={[
+                      styles.suggestionItem,
+                      { borderBottomColor: isDark ? "#332550" : "#F1F5F9" },
+                    ]}
+                    onPress={() => handleSelectSuggestion(item)}
+                  >
+                    <Ionicons
+                      name="location-sharp"
+                      size={16}
+                      color={colors.primaryPurple}
+                      style={{ marginRight: 8, marginTop: 2 }}
+                    />
+                    <Text
+                      style={[styles.suggestionText, { color: colors.text }]}
+                      numberOfLines={2}
+                    >
+                      {item.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
           </View>
 
           {isLoggedIn ? (
@@ -214,7 +401,7 @@ export default function HomeScreen() {
               { backgroundColor: isDark ? "#241B38" : "#EDE9F5" },
             ]}
             activeOpacity={0.8}
-            onPress={() => refreshLocation()}
+            onPress={handleRecentralizeGps}
             accessibilityLabel="Recentralizar mapa"
           >
             <MaterialCommunityIcons
@@ -377,10 +564,12 @@ export default function HomeScreen() {
         <CreateReportBottomSheet
           visible={isReportSheetOpen}
           onClose={() => setIsReportSheetOpen(false)}
-          onSubmit={(data) => {
-            console.log("Relato criado:", data);
-          }}
-          currentAddress={`Lat: ${currentCoords.latitude.toFixed(4)}, Lng: ${currentCoords.longitude.toFixed(4)}`}
+          onSubmit={handleCreateReport}
+          currentAddress={
+            selectedAddressInfo?.label ||
+            (location ? "Minha localização atual (GPS)" : "São Paulo - SP")
+          }
+          currentCoordinates={selectedAddressInfo?.coords || currentCoords}
         />
       </View>
 
@@ -438,10 +627,43 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing.sm,
-    zIndex: 10,
+    zIndex: 20,
+  },
+  searchWrapper: {
+    flex: 1,
+    position: "relative",
+    zIndex: 30,
+  },
+  suggestionsDropdown: {
+    position: "absolute",
+    top: 54,
+    left: 0,
+    right: 0,
+    borderRadius: 16,
+    borderWidth: 1,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 8,
+    maxHeight: 240,
+    overflow: "hidden",
+    zIndex: 50,
+  },
+  suggestionItem: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderBottomWidth: 1,
+  },
+  suggestionText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: theme.typography.fontFamily,
   },
   searchPill: {
-    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     height: 48,
