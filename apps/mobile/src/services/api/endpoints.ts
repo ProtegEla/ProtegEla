@@ -38,6 +38,10 @@ export const ENDPOINTS = {
   SUPPORT_LOCATIONS: {
     NEARBY: "/support-locations/nearby",
   },
+  // Endereços e Geocodificação
+  ADDRESSES: {
+    SUGGESTIONS: "/addresses/suggestions",
+  },
   // Notificações
   NOTIFICATIONS: {
     PROXIMITY_ALERT: "/notifications/proximity-alert",

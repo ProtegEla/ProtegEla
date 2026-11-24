@@ -42,6 +42,7 @@ Para proteger a integridade de usuárias e seus contatos de confiança mesmo em 
 1. **Localização em Tempo Real**:
    - As coordenadas GPS enviadas para o cálculo de rotas e consulta de delegacias próximas são processadas **estritamente em memória** durante a requisição.
    - **O servidor não armazena histórico contínuo de rastreamento de deslocamento das usuárias**.
+   - O histórico privado registra apenas resumos selecionados explicitamente: rótulos e totais de rota cifrados, sem coordenadas ou geometria; até 100 itens por lista/conta, por 30 dias. A limpeza periódica deve ser agendada na implantação, além da limpeza nas operações de histórico.
 2. **Relatos Colaborativos (RF09)**:
    - As coordenadas associadas a um relato de perigo referem-se ao local do incidente, e a usuária pode optar expressamente pelo anonimato no registro.
    - O identificador de dispositivo (`X-Device-Id`) é usado apenas para rate-limit e controle de abuso (RN06), sem associação de histórico de deslocamento.

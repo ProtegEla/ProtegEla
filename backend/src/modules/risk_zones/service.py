@@ -368,3 +368,163 @@ def parse_bbox(value: str) -> tuple[float, float, float, float]:
             "bbox inválida ou maior que 25 km². Aproxime o mapa.",
             code="VALIDATION_ERROR",
         ) from None
+
+
+# Regras específicas da comparação incremental de rotas; não alteram o mapa RF06.
+def calendar_months_before(day, months):
+    from calendar import monthrange
+
+    year, month = divmod(day.year * 12 + day.month - 1 - months, 12)
+    month += 1
+    return day.replace(
+        year=year, month=month, day=min(day.day, monthrange(year, month)[1])
+    )
+
+
+def routing_weights(rows, today):
+    """Pontuação dos grupos com uma referência temporal comum, sem níveis de segurança."""
+    cutoff = calendar_months_before(today, 6)
+    annual = calendar_months_before(today, 12)
+    valid = [row for row in rows if row["incident_date"] <= today]
+    keys = {row["key"] for row in valid}
+    valid = [
+        {**row, "neighbors": [key for key in row["neighbors"] if key in keys]}
+        for row in valid
+    ]
+    by_key = {row["key"]: row for row in valid}
+    weighted = []
+    for group in group_incidents(valid):
+        members = [
+            by_key[f"{incident.source}:{incident.id}"] for incident in group.incidents
+        ]
+        eligible = any(
+            row["source"] == "ssp" or row["confirmations"] >= 3 for row in members
+        )
+        if not eligible:
+            continue
+        activities = [
+            row["last_activity"]
+            for row in members
+            if row["last_activity"] is not None and row["last_activity"] <= today
+        ]
+        recent = bool(activities) and max(activities) >= cutoff
+        score = sum(
+            (
+                (2 if row["incident_date"] >= annual else 0.5)
+                if row["source"] == "ssp"
+                else (1 + row["confirmations"]) * (1 if recent else 0.5)
+            )
+            for row in members
+        )
+        for row in members:
+            weighted.append(
+                {"group_id": str(group.id), "score": score, "geometry": row["location"]}
+            )
+    return weighted
+
+
+class RoutingRiskService:
+    """Snapshot dos incidentes e correspondência métrica entre OSM e ORS."""
+
+    def __init__(self, session):
+        self.session = session
+
+    async def snapshot(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        today = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+        # Um único statement garante a mesma visão de relatos, moderação e votos.
+        query = text(
+            """
+            WITH grouped AS ("""
+            + _GROUP_QUERY.text
+            + """ )
+            SELECT g.*, votes.confirmations,
+                greatest((r.created_at AT TIME ZONE 'America/Sao_Paulo')::date,
+                         votes.last_activity) AS last_activity
+            FROM grouped g
+            LEFT JOIN reports r ON g.source = 'app' AND r.id = g.id
+            LEFT JOIN LATERAL (
+                SELECT count(DISTINCT user_id) FILTER (
+                    WHERE kind = 'confirmation'
+                    AND (created_at AT TIME ZONE 'America/Sao_Paulo')::date >= :cutoff
+                    AND (created_at AT TIME ZONE 'America/Sao_Paulo')::date <= :today
+                ) AS confirmations,
+                max((created_at AT TIME ZONE 'America/Sao_Paulo')::date) FILTER (
+                    WHERE (created_at AT TIME ZONE 'America/Sao_Paulo')::date <= :today
+                ) AS last_activity
+                FROM report_interactions WHERE report_id = r.id
+            ) votes ON true
+            ORDER BY g.key LIMIT 10001
+        """
+        )
+        result = await self.session.execute(
+            query, {"cutoff": calendar_months_before(today, 6), "today": today}
+        )
+        rows = result.mappings().all()
+        if len(rows) > 10000:
+            raise ValueError("Limite de incidentes para avaliação excedido.")
+        rows = [row for row in rows if row["incident_date"] <= today]
+        return rows, routing_weights(rows, today)
+
+    async def exposures(self, routes, roads, incidents):
+        import json
+
+        # Projeção métrica local; o chamador restringe a análise à região de SP.
+        query = text("""
+        WITH roads AS MATERIALIZED (
+            SELECT value->>'id' AS id, (value->>'ground')::boolean AS ground,
+                ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON((value->'geometry')::text),4326),31983) AS geom
+            FROM jsonb_array_elements(CAST(:roads AS jsonb))
+        ), incidents AS (
+            SELECT value->>'group_id' AS group_id, (value->>'score')::float AS score,
+                ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON((value->'geometry')::text),4326),31983) AS geom
+            FROM jsonb_array_elements(CAST(:incidents AS jsonb))
+        ), nearest AS (
+            SELECT i.*, n.id, n.ground, n.distance,
+                (SELECT min(ST_Distance(i.geom, r.geom)) FROM roads r WHERE r.id <> n.id) AS second
+            FROM incidents i LEFT JOIN LATERAL (
+                SELECT id, ground, ST_Distance(i.geom, geom) AS distance
+                FROM roads ORDER BY ST_Distance(i.geom, geom), id LIMIT 1
+            ) n ON true
+        ), weights AS (
+            SELECT id, sum(score) AS score FROM (
+                SELECT DISTINCT id, group_id, score FROM nearest
+            ) groups GROUP BY id
+        ), pieces AS (
+            SELECT route_index, (ST_DumpSegments(geom)).geom AS geom
+            FROM (
+                SELECT ordinality - 1 AS route_index,
+                    ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(value::text),4326),31983) AS geom
+                FROM jsonb_array_elements(CAST(:routes AS jsonb)) WITH ORDINALITY
+            ) route_geometries
+        ), matched AS (
+            SELECT p.*, m.id, m.matches, m.ground FROM pieces p
+            LEFT JOIN LATERAL (
+                SELECT min(id) AS id, count(*) AS matches, bool_and(ground) AS ground
+                FROM roads r WHERE ST_Covers(ST_Buffer(r.geom,3),p.geom)
+            ) m ON true
+        )
+        SELECT route_index,
+            bool_and(matches = 1 AND ground) AS matched,
+            sum(ST_Length(ST_Transform(m.geom,4326)::geography) * coalesce(w.score,0)) AS exposure,
+            (SELECT bool_and(id IS NOT NULL AND ground AND distance <= 20
+                AND (second IS NULL OR second - distance > 1)) FROM nearest) AS incidents_matched
+        FROM matched m LEFT JOIN weights w ON w.id = m.id
+        GROUP BY route_index ORDER BY route_index
+        """)
+        result = await self.session.execute(
+            query,
+            {
+                "roads": json.dumps(roads),
+                "incidents": json.dumps(incidents),
+                "routes": json.dumps([route.geometry.model_dump() for route in routes]),
+            },
+        )
+        rows = result.mappings().all()
+        if len(rows) != len(routes) or any(
+            not row["matched"] or row["incidents_matched"] is False for row in rows
+        ):
+            raise ValueError("Correspondência de vias incompleta ou ambígua.")
+        return [row["exposure"] for row in rows]

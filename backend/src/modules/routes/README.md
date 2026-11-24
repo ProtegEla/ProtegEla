@@ -1,12 +1,18 @@
-# Módulo: Routes (Cálculo e Navegação de Rotas Seguras)
+# Rotas para pedestres (RF15)
 
-## 1. Escopo e Requisitos Associados
-- **RF15**: Cálculo de rota do ponto A ao B para pedestres evitando zonas de risco.
-- **RN04**: Penalidade de custo proporcional em vias com histórico de incidentes.
-- **RN07**: Comparação com rota rápida e emissão de alerta se desvio > 30% do tempo.
-- **RNF03 / RNF10**: Resiliência e tratamento de falhas da API do OpenRouteService.
+`POST /api/v1/routes/calculate`: origem, destino e até 3 paradas ordenadas.
+Retorna até 3 candidatas ORS, geometria, instruções, tempo e exposição aos riscos
+mapeados; sinaliza desvio de tempo superior a 30% (RN07). Sem histórico no servidor.
 
-## 2. Estrutura Direta de Arquivos
-- `router.py`: Rota `/api/v1/routes/calculate` e esquemas de pontos de trajeto.
-- `service.py`: Lógica de integração com OpenRouteService e validação do limite de 30%.
-- `models.py`: Modelos SQLAlchemy para histórico de rotas salvas.
+`clients.py` integra ORS/Overpass; `schemas.py` valida os formatos; `service.py`
+compõe candidatas e compara exposição; `router.py` injeta dependências e expõe HTTP.
+O módulo `risk_zones` calcula elegibilidade, pesos e correspondência espacial.
+
+Contrato, configurações, limites e fórmula em [api_contracts.md](../../../../docs/api_contracts.md#16-rotas-para-pedestres--rf15).
+RN04 é atendida parcialmente: seleção entre candidatas, sem modificar pesos no motor.
+Risco indisponível ou ausência de registros nunca significa garantia de segurança.
+
+O aplicativo usa `geometry`, `legs[].steps` e `comparison` para apresentar a escolha
+e iniciar a navegação; `way_points` indexa a geometria completa. GPS, cache offline
+e notificação persistente (RNF04) devem ser implementados no cliente. Não há endpoint
+de início nem rastreamento. Validação com chave ORS e dados reais permanece necessária.

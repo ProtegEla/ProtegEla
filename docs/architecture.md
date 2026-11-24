@@ -66,6 +66,7 @@ Cada módulo funcional possui uma divisão direta de responsabilidades em arquiv
 | **`comments`** | Comentários e respostas encadeadas nos relatos de perigo. | RF07, RF08 |
 | **`risk_zones`** | Agrupamento espacial (raio 20m), pontuação de risco e amortização temporal. | RF06, RN01, RN02, RN03, RN05 |
 | **`routes`** | Integração com OpenRouteService para rota de pedestres com desvio de risco. | RF15, RN04, RN07, RNF10 |
+| **`history`** | Histórico privado de pesquisas selecionadas e resumos de rotas, cifrado e com retenção limitada. | RF04, RNF07 |
 | **`emergency`** | Acionamento de pânico e lista de telefones úteis (180, 190). | RF10, RF14, RNF09 |
 | **`support_locations`** | Delegacias e hospitais próximos via Overpass API (OSM). | RF12, RNF10 |
 | **`notifications`** | Alertas de proximidade de áreas de risco e avisos locais. | RF13, RNF04 |
