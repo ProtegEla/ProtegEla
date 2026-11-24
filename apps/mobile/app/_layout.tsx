@@ -57,6 +57,7 @@ function InnerLayout() {
         <Stack.Screen name="index" />
         <Stack.Screen name="login" />
         <Stack.Screen name="register" />
+        <Stack.Screen name="telefones" />
         <Stack.Screen name="orientacoes" />
         <Stack.Screen name="emergency" />
       </Stack>
