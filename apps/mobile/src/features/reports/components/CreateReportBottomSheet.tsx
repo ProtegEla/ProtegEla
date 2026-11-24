@@ -1,4 +1,5 @@
 import React, {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -18,14 +19,19 @@ import {
 } from "react-native";
 
 import { Ionicons } from "@expo/vector-icons";
-
 import { useAppTheme } from "../../../theme";
+
+import {
+  addressService,
+  type AddressSuggestion,
+} from "../../../services/api/addresses";
 
 import {
   RiskMap,
   type MapTileStyle,
 } from "../../map/components/RiskMap";
 
+import { DEFAULT_SP_COORDINATES } from "../../map/hooks/useCurrentLocation";
 import type { Coordinates } from "../../map/types";
 
 import {
@@ -34,20 +40,22 @@ import {
   type CreateReportPayload,
 } from "../reportModel";
 
-import {
-  searchAddresses,
-  type AddressResult,
-} from "../addressSearch";
+export interface CreateReportData extends CreateReportPayload {
+  address: string;
+  location: Coordinates & {
+    address: string;
+  };
+}
 
 export interface CreateReportBottomSheetProps {
   visible: boolean;
   onClose: () => void;
-
   onSubmit: (
-    data: CreateReportPayload,
+    data: CreateReportData,
   ) => void | Promise<void>;
 
-  initialLocation: Coordinates;
+  initialLocation?: Coordinates;
+  currentCoordinates?: Coordinates;
   currentAddress?: string;
   mapStyle?: MapTileStyle;
 }
@@ -66,33 +74,49 @@ const PERIODS = [
   { label: "Madrugada", value: "madrugada" },
 ];
 
+function validLocation(
+  location?: Coordinates,
+): location is Coordinates {
+  return Boolean(
+    location && isValidCoordinates(location),
+  );
+}
+
 export function CreateReportBottomSheet({
   visible,
   onClose,
   onSubmit,
   initialLocation,
+  currentCoordinates,
   currentAddress = "Local selecionado no mapa",
   mapStyle = "streets",
 }: CreateReportBottomSheetProps) {
   const { isDark } = useAppTheme();
 
+  const getInitialLocation = (): Coordinates => ({
+    ...(validLocation(initialLocation)
+      ? initialLocation
+      : validLocation(currentCoordinates)
+        ? currentCoordinates
+        : DEFAULT_SP_COORDINATES),
+  });
+
   const [selectedLocation, setSelectedLocation] =
-    useState<Coordinates>(() => ({
-      ...initialLocation,
-    }));
+    useState<Coordinates>(getInitialLocation);
 
   const [previewCenter, setPreviewCenter] =
-    useState<Coordinates>(() => ({
-      ...initialLocation,
-    }));
+    useState<Coordinates>(getInitialLocation);
+
+  const [cameraRevision, setCameraRevision] = useState(0);
 
   const [selectedAddress, setSelectedAddress] =
     useState(currentAddress);
 
   const [query, setQuery] = useState(currentAddress);
   const [addressDirty, setAddressDirty] = useState(false);
+  const [isEditingAddress, setIsEditingAddress] = useState(false);
 
-  const [results, setResults] = useState<AddressResult[]>([]);
+  const [results, setResults] = useState<AddressSuggestion[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [addressError, setAddressError] = useState("");
 
@@ -106,35 +130,102 @@ export function CreateReportBottomSheet({
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const searchIdRef = useRef(0);
-  const abortRef = useRef<AbortController | null>(null);
-  const lastSearchAtRef = useRef(0);
-
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const submittingRef = useRef(false);
   const mountedRef = useRef(true);
+  const visibleRef = useRef(visible);
+  const wasVisibleRef = useRef(false);
+  const sessionIdRef = useRef(0);
+
+  const initialSessionRef = useRef({
+    location: getInitialLocation(),
+    address: currentAddress,
+  });
+
+  visibleRef.current = visible;
+
+  const invalidateSearch = useCallback(() => {
+    searchIdRef.current += 1;
+
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+    }
+
+    timerRef.current = null;
+    setIsSearching(false);
+  }, []);
 
   useEffect(() => {
     mountedRef.current = true;
 
     return () => {
       mountedRef.current = false;
+      sessionIdRef.current += 1;
       searchIdRef.current += 1;
-      abortRef.current?.abort();
+
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
     };
   }, []);
 
-  function invalidateSearch() {
-    searchIdRef.current += 1;
-    abortRef.current?.abort();
-    abortRef.current = null;
-    setIsSearching(false);
-  }
+  // Reinicia somente ao abrir uma nova sessão.
+  // Atualizações do GPS não sobrescrevem o rascunho.
+  useEffect(() => {
+    if (visible && !wasVisibleRef.current) {
+      const location = getInitialLocation();
 
-  function handleClose() {
+      initialSessionRef.current = {
+        location,
+        address: currentAddress,
+      };
+
+      sessionIdRef.current += 1;
+
+      invalidateSearch();
+
+      setSelectedLocation(location);
+      setPreviewCenter(location);
+      setSelectedAddress(currentAddress);
+      setQuery(currentAddress);
+
+      setAddressDirty(false);
+      setIsEditingAddress(false);
+      setResults([]);
+      setAddressError("");
+
+      setAddressDetail("");
+      setIncidentType("Assédio");
+      setDescription("");
+      setPeriod("noite");
+      setIsAnonymous(true);
+
+      setSubmitError("");
+      submittingRef.current = false;
+      setIsSubmitting(false);
+    }
+
+    if (!visible) {
+      invalidateSearch();
+    }
+
+    wasVisibleRef.current = visible;
+  }, [
+    visible,
+    currentAddress,
+    initialLocation?.latitude,
+    initialLocation?.longitude,
+    currentCoordinates?.latitude,
+    currentCoordinates?.longitude,
+    invalidateSearch,
+  ]);
+
+  const handleClose = useCallback(() => {
     if (submittingRef.current) return;
 
     invalidateSearch();
     onClose();
-  }
+  }, [invalidateSearch, onClose]);
 
   useEffect(() => {
     if (!visible) return;
@@ -142,127 +233,206 @@ export function CreateReportBottomSheet({
     const subscription = BackHandler.addEventListener(
       "hardwareBackPress",
       () => {
-        if (!submittingRef.current) {
-          searchIdRef.current += 1;
-          abortRef.current?.abort();
-          onClose();
-        }
-
+        handleClose();
         return true;
       },
     );
 
     return () => subscription.remove();
-  }, [visible, onClose]);
+  }, [visible, handleClose]);
 
-  async function handleSearch() {
-    if (submittingRef.current) return;
-
-    const normalized = query.trim();
-
-    if (normalized.length < 3) {
-      setAddressError(
-        "Digite pelo menos 3 caracteres para buscar.",
-      );
-      return;
-    }
-
-    if (Date.now() - lastSearchAtRef.current < 1000) {
-      setAddressError(
-        "Aguarde um instante antes de buscar novamente.",
-      );
-      return;
-    }
-
-    lastSearchAtRef.current = Date.now();
-
-    invalidateSearch();
-
-    const requestId = searchIdRef.current;
-    const controller = new AbortController();
-
-    abortRef.current = controller;
-
-    setIsSearching(true);
-    setAddressError("");
-    setResults([]);
-
-    try {
-      const addresses = await searchAddresses(
-        normalized,
-        controller.signal,
-      );
-
+  const runSearch = useCallback(
+    async (value: string) => {
       if (
-        !mountedRef.current ||
-        requestId !== searchIdRef.current
+        !visibleRef.current ||
+        submittingRef.current
       ) {
         return;
       }
 
-      setResults(addresses);
+      invalidateSearch();
 
-      if (!addresses.length) {
+      const normalized = value.trim();
+
+      if (normalized.length < 3) {
+        setResults([]);
         setAddressError(
-          "Nenhum endereço encontrado. Tente incluir bairro e cidade.",
+          "Digite pelo menos 3 caracteres para buscar.",
         );
-      }
-    } catch (error) {
-      if (
-        !mountedRef.current ||
-        requestId !== searchIdRef.current
-      ) {
         return;
       }
 
-      setAddressError(
-        error instanceof Error
-          ? error.message
-          : "Não foi possível buscar o endereço.",
-      );
-    } finally {
-      if (
-        mountedRef.current &&
-        requestId === searchIdRef.current
-      ) {
-        setIsSearching(false);
+      const requestId = searchIdRef.current;
+
+      setIsSearching(true);
+      setAddressError("");
+      setResults([]);
+
+      try {
+        const suggestions =
+          await addressService.getSuggestions(
+            normalized,
+            4,
+          );
+
+        if (
+          !mountedRef.current ||
+          !visibleRef.current ||
+          requestId !== searchIdRef.current
+        ) {
+          return;
+        }
+
+        const validSuggestions =
+          Array.isArray(suggestions)
+            ? suggestions.filter((item) =>
+                validLocation({
+                  latitude: Number(item.latitude),
+                  longitude: Number(item.longitude),
+                }),
+              )
+            : [];
+
+        setResults(validSuggestions);
+
+        if (!validSuggestions.length) {
+          setAddressError(
+            "Nenhum endereço encontrado. Inclua bairro e cidade.",
+          );
+        }
+      } catch (error) {
+        if (
+          !mountedRef.current ||
+          !visibleRef.current ||
+          requestId !== searchIdRef.current
+        ) {
+          return;
+        }
+
+        setAddressError(
+          error instanceof Error
+            ? error.message
+            : "Não foi possível buscar o endereço.",
+        );
+      } finally {
+        if (
+          mountedRef.current &&
+          visibleRef.current &&
+          requestId === searchIdRef.current
+        ) {
+          setIsSearching(false);
+        }
       }
+    },
+    [invalidateSearch],
+  );
+
+  useEffect(() => {
+    if (
+      !visible ||
+      !isEditingAddress ||
+      !addressDirty ||
+      isSubmitting ||
+      query.trim().length < 3
+    ) {
+      return;
     }
-  }
 
-  function chooseAddress(result: AddressResult) {
+    timerRef.current = setTimeout(() => {
+      void runSearch(query);
+    }, 350);
+
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
+
+      timerRef.current = null;
+    };
+  }, [
+    query,
+    isEditingAddress,
+    addressDirty,
+    visible,
+    isSubmitting,
+    runSearch,
+  ]);
+
+  function chooseLocation(
+    coordinates: Coordinates,
+    label: string,
+    recenter: boolean,
+  ) {
+    if (
+      !validLocation(coordinates) ||
+      submittingRef.current
+    ) {
+      return;
+    }
+
     invalidateSearch();
-
-    setSelectedLocation({ ...result.location });
-    setPreviewCenter({ ...result.location });
-
-    setSelectedAddress(result.label);
-    setQuery(result.label);
-
-    setAddressDirty(false);
-    setAddressError("");
-    setResults([]);
-  }
-
-  function chooseMapLocation(coordinates: Coordinates) {
-    if (!isValidCoordinates(coordinates)) return;
-
-    invalidateSearch();
-
-    const label = `Local no mapa · ${coordinatesLabel(
-      coordinates,
-    )}`;
 
     setSelectedLocation({ ...coordinates });
+
+    if (recenter) {
+      setPreviewCenter({ ...coordinates });
+      setCameraRevision((value) => value + 1);
+    }
+
     setSelectedAddress(label);
     setQuery(label);
 
     setAddressDirty(false);
+    setIsEditingAddress(false);
     setAddressError("");
     setResults([]);
+  }
 
-    // Não muda o centro ao tocar:
-    // a usuária continua explorando o mapa livremente.
+  function chooseAddress(result: AddressSuggestion) {
+    chooseLocation(
+      {
+        latitude: Number(result.latitude),
+        longitude: Number(result.longitude),
+      },
+      result.label,
+      true,
+    );
+  }
+
+  function chooseMapLocation(coordinates: Coordinates) {
+    chooseLocation(
+      coordinates,
+      `Local no mapa · ${coordinatesLabel(coordinates)}`,
+      false,
+    );
+  }
+
+  function resetToCurrentLocation() {
+    const coordinates = validLocation(currentCoordinates)
+      ? currentCoordinates
+      : initialSessionRef.current.location;
+
+    const label = validLocation(currentCoordinates)
+      ? `Localização atual · ${coordinatesLabel(coordinates)}`
+      : initialSessionRef.current.address;
+
+    chooseLocation(coordinates, label, true);
+  }
+
+  function toggleAddressEditing() {
+    invalidateSearch();
+    setResults([]);
+    setAddressError("");
+
+    if (isEditingAddress) {
+      setQuery(selectedAddress);
+      setAddressDirty(false);
+      setIsEditingAddress(false);
+    } else {
+      setQuery("");
+      setAddressDirty(false);
+      setIsEditingAddress(true);
+    }
   }
 
   async function handleSubmit() {
@@ -272,59 +442,85 @@ export function CreateReportBottomSheet({
 
     if (addressDirty) {
       setSubmitError(
-        "Busque e selecione um endereço ou toque no mapa para confirmar o local.",
+        "Selecione um resultado da busca ou toque no mapa para confirmar o endereço.",
       );
       return;
     }
 
-    if (!isValidCoordinates(selectedLocation)) {
+    if (!validLocation(selectedLocation)) {
       setSubmitError(
         "Selecione uma localização válida no mapa.",
       );
       return;
     }
 
-    const payload: CreateReportPayload = {
+    const normalizedDescription = description.trim();
+
+    if (
+      normalizedDescription.length < 10 ||
+      normalizedDescription.length > 1000
+    ) {
+      setSubmitError(
+        "Descreva o ocorrido com 10 a 1.000 caracteres.",
+      );
+      return;
+    }
+
+    const address =
+      selectedAddress.trim() ||
+      `Local no mapa · ${coordinatesLabel(selectedLocation)}`;
+
+    const payload: CreateReportData = {
       category: incidentType,
-      description,
-      addressDetail,
+      description: normalizedDescription,
+      addressDetail: addressDetail.trim(),
       period,
       isAnonymous,
-
-      location: { ...selectedLocation },
-      address: selectedAddress,
+      address,
+      location: {
+        ...selectedLocation,
+        address,
+      },
     };
+
+    const sessionId = sessionIdRef.current;
 
     submittingRef.current = true;
     setIsSubmitting(true);
-
-    // Invalida qualquer busca que ainda esteja em andamento.
     invalidateSearch();
 
     try {
       await onSubmit(payload);
     } catch (error) {
-      if (mountedRef.current) {
-        setSubmitError(
-          error instanceof Error
-            ? error.message
-            : "Não foi possível publicar o relato.",
-        );
+      if (
+        !mountedRef.current ||
+        sessionId !== sessionIdRef.current
+      ) {
+        return;
       }
+
+      setSubmitError(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível publicar o relato.",
+      );
 
       submittingRef.current = false;
+      setIsSubmitting(false);
+      return;
+    }
 
-      if (mountedRef.current) {
-        setIsSubmitting(false);
-      }
-
+    if (
+      !mountedRef.current ||
+      sessionId !== sessionIdRef.current
+    ) {
       return;
     }
 
     submittingRef.current = false;
+    setIsSubmitting(false);
 
-    if (mountedRef.current) {
-      setIsSubmitting(false);
+    if (visibleRef.current) {
       onClose();
     }
   }
@@ -384,7 +580,43 @@ export function CreateReportBottomSheet({
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          <Text style={s.label}>Endereço</Text>
+          <View style={s.locationLabelRow}>
+            <Text
+              style={[
+                s.label,
+                { marginTop: 0, marginBottom: 0 },
+              ]}
+            >
+              Local do incidente
+            </Text>
+
+            <TouchableOpacity
+              disabled={isSubmitting}
+              onPress={toggleAddressEditing}
+              accessibilityRole="button"
+              accessibilityLabel={
+                isEditingAddress
+                  ? "Cancelar busca de endereço"
+                  : "Alterar local do incidente"
+              }
+              style={s.changeAddressButton}
+            >
+              <Ionicons
+                name={
+                  isEditingAddress
+                    ? "close-outline"
+                    : "create-outline"
+                }
+                size={15}
+                color="#FFFFFF"
+              />
+              <Text style={s.changeAddressText}>
+                {isEditingAddress
+                  ? "Cancelar busca"
+                  : "Alterar local"}
+              </Text>
+            </TouchableOpacity>
+          </View>
 
           <View style={s.addressCard}>
             <View style={s.searchRow}>
@@ -396,6 +628,7 @@ export function CreateReportBottomSheet({
                   invalidateSearch();
                   setQuery(value);
                   setAddressDirty(true);
+                  setIsEditingAddress(true);
                   setResults([]);
                   setAddressError("");
                 }}
@@ -403,7 +636,7 @@ export function CreateReportBottomSheet({
                 placeholderTextColor="#81758E"
                 returnKeyType="search"
                 onSubmitEditing={() => {
-                  void handleSearch();
+                  void runSearch(query);
                 }}
                 style={s.searchInput}
               />
@@ -413,7 +646,7 @@ export function CreateReportBottomSheet({
                 accessibilityLabel="Buscar endereço"
                 disabled={isSearching || isSubmitting}
                 onPress={() => {
-                  void handleSearch();
+                  void runSearch(query);
                 }}
                 style={s.searchButton}
               >
@@ -457,7 +690,6 @@ export function CreateReportBottomSheet({
                       size={18}
                       color="#8055B5"
                     />
-
                     <Text style={s.resultText}>
                       {result.label}
                     </Text>
@@ -469,6 +701,7 @@ export function CreateReportBottomSheet({
             <View style={s.map}>
               <RiskMap
                 center={previewCenter}
+                cameraRevision={cameraRevision}
                 zoom={17}
                 mapStyle={mapStyle}
                 selectedLocation={selectedLocation}
@@ -478,9 +711,35 @@ export function CreateReportBottomSheet({
             </View>
           </View>
 
-          <Text style={s.mapHint}>
-            Toque no mapa para ajustar o ponto exato.
-          </Text>
+          <View style={s.locationTools}>
+            <Text
+              style={[
+                s.mapHint,
+                { flex: 1, marginTop: 0 },
+              ]}
+            >
+              Toque no mapa para ajustar o ponto exato.
+            </Text>
+
+            <TouchableOpacity
+              disabled={isSubmitting}
+              onPress={resetToCurrentLocation}
+              accessibilityRole="button"
+              accessibilityLabel="Usar localização atual ou local inicial"
+              style={s.resetLocationButton}
+            >
+              <Ionicons
+                name="navigate-outline"
+                size={15}
+                color="#FFFFFF"
+              />
+              <Text style={s.changeAddressText}>
+                {validLocation(currentCoordinates)
+                  ? "Usar local atual"
+                  : "Usar local inicial"}
+              </Text>
+            </TouchableOpacity>
+          </View>
 
           <Text style={s.selectedAddress}>
             Local selecionado: {selectedAddress}
@@ -613,7 +872,6 @@ export function CreateReportBottomSheet({
                   size={20}
                   color="#FFFFFF"
                 />
-
                 <Text style={s.radioText}>
                   {value ? "Sim" : "Não"}
                 </Text>
@@ -710,6 +968,41 @@ const s = StyleSheet.create({
   scrollContent: {
     paddingBottom: 12,
   },
+  locationLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    marginTop: 12,
+    marginBottom: 7,
+  },
+  changeAddressButton: {
+    minHeight: 36,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    backgroundColor: "rgba(255,255,255,0.12)",
+  },
+  changeAddressText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  locationTools: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 6,
+  },
+  resetLocationButton: {
+    minHeight: 40,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 4,
+  },
   label: {
     color: "#F1EAF8",
     fontSize: 13,
@@ -797,6 +1090,7 @@ const s = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
+    marginTop: 6,
   },
   pill: {
     backgroundColor: "rgba(255,255,255,0.15)",

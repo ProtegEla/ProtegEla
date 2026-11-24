@@ -100,7 +100,7 @@ class OpenRouteServiceClient:
                     json={
                         "coordinates": [origin.coordinate(), destination.coordinate()],
                         "preference": "fastest",
-                        "language": "pt-br",
+                        "language": "pt",
                         "instructions": True,
                         "instructions_format": "text",
                         "elevation": False,

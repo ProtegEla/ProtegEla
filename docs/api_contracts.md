@@ -852,7 +852,7 @@ Exemplo:
 
 ### 13.2. Resposta de Sucesso
 
-A API busca candidatas em um raio de 5 km em linha reta da localização informada e retorna até cinco delegacias, ordenadas pela menor distância a pé pelas ruas. Se encontrar menos de cinco candidatas nesse raio, retorna os locais disponíveis.
+A API busca delegacias em um raio de 5 km da localização informada por meio da Overpass API e retorna a lista ordenada pela menor distância geodésica em metros (`distance_m`), calculada via fórmula de Haversine.
 
 ```json
 {
@@ -862,23 +862,24 @@ A API busca candidatas em um raio de 5 km em linha reta da localização informa
       "name": "Delegacia de exemplo",
       "latitude": -23.5505,
       "longitude": -46.6333,
-      "distance_m": 420
+      "distance_m": 330
     }
   ]
 }
 ```
 
-`id` identifica o elemento no OpenStreetMap. `name` pode ser `null` se o OSM não fornecer um nome. `distance_m` é a distância a pé, em metros, calculada pelo OpenRouteService.
+`id` identifica o elemento no OpenStreetMap (`node/id`, `way/id`, `relation/id`). `name` pode ser `null` se o OSM não fornecer um nome registrado. `distance_m` é a distância em linha reta, em metros, calculada no servidor com precisão geodésica.
 
-### 13.3. Fontes de Dados, Erros e Privacidade
+### 13.3. Fontes de Dados, Erros e Resiliência
 
 - As delegacias são consultadas no OpenStreetMap por meio da Overpass API.
-- Se a Overpass estiver indisponível, o backend tenta usar locais de apoio guardados no cache. (AINDA NÃO DISPONÍVEL)
-- O OpenRouteService calcula as distâncias a pé dos locais até a posição informada.
-- Se não houver locais em cache quando a Overpass falhar, ou se não for possível calcular as distâncias, a API retorna `503 EXTERNAL_SERVICE_UNAVAILABLE`.
+- **Resiliência e Fallback Multi-Servidor**: Para evitar indisponibilidade por sobrecarga do servidor central (`overpass-api.de`), o cliente Overpass do backend implementa fallback sequencial automático entre cinco instâncias públicas (`openstreetmap.fr`, `kumi.systems`, `overpass-api.de`, `z.overpass-api.de`, `lz4.overpass-api.de`).
+- **Eliminação de Gargalo de Cota**: As distâncias para ordenação são computadas diretamente por Haversine no backend e recalculadas dinamicamente no cliente mobile, sem realizar dezenas de chamadas HTTP ao OpenRouteService (o que provocava erro `429 Too Many Requests` devido ao limite estrito de cota gratuita de 40 req/min).
+- **Cache Local no Cliente (RNF10)**: O aplicativo mobile persiste os pontos de apoio recebidos em cache seguro no dispositivo (`AsyncStorage`), garantindo funcionamento contínuo mesmo sob oscilações de rede.
 - Coordenadas ausentes ou inválidas retornam `422 VALIDATION_ERROR`.
+- Se todas as instâncias do Overpass falharem, a API retorna `503 EXTERNAL_SERVICE_UNAVAILABLE`.
 - As respostas de erro seguem o envelope padronizado definido neste documento.
-- A localização da usuária é processada durante a requisição e não é armazenada.
+- A localização da usuária é processada em memória durante a requisição e não é armazenada em banco.
 
 ## 14. Telefone do Botão de Emergência — RF14
 
@@ -925,6 +926,9 @@ ou resposta externa inválida). Limite local: `ADDRESS_SEARCH_REQUESTS_PER_MINUT
 (padrão 60), compartilhado entre clientes por processo, janela móvel de 60 s,
 inclusive tentativas externas malsucedidas; reinicia com o processo. Múltiplos
 workers exigem limite agregado no gateway conforme a cota da equipe.
+
+**Fallback no Frontend (Resiliência RNF10):**
+Caso a API do backend retorne erro 503 (serviço externo temporariamente indisponível ou sem chave configurada) ou a rede falhe, o serviço `addressService` do aplicativo mobile executa fallback automático para o endpoint público Nominatim do OpenStreetMap (`https://nominatim.openstreetmap.org/search`), normalizando os resultados no mesmo formato `{id, label, latitude, longitude}`. Isso garante que a usuária nunca fique sem a capacidade de localizar endereços no mapa.
 
 Sem banco, histórico ou logs próprios de consultas. O texto é enviado ao ORS;
 configurar logs de acesso/proxy/HTTP para omitir query strings e credenciais.

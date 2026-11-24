@@ -1,8 +1,4 @@
-import React, {
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 import {
   ActivityIndicator,
@@ -20,10 +16,11 @@ import type {
 } from "../types";
 
 import {
-  getCategoryStyle,
   isValidCoordinates,
   type RiskMapReport,
 } from "../../reports/reportModel";
+
+import { useAppTheme } from "../../../theme";
 
 import {
   createReportMarkerIcon,
@@ -36,27 +33,38 @@ export type MapTileStyle =
   | "streets"
   | "satellite";
 
+export interface MapRoutePolyline {
+  id: string;
+  coordinates: Coordinates[];
+  color?: string;
+  weight?: number;
+  opacity?: number;
+  isSelected?: boolean;
+}
+
 export interface RiskMapProps<
   TReport extends RiskMapReport = RiskMapReport,
 > {
   center: Coordinates;
   zoom?: number;
   userLocation?: Coordinates | null;
+  selectedLocation?: Coordinates | null;
+  destinationLocation?: Coordinates | null;
+
+  routes?: MapRoutePolyline[];
+  selectedRouteId?: string | null;
+
   mapStyle?: MapTileStyle;
   supportLocations?: SupportLocation[];
   riskZones?: RiskZoneFeature[];
   reports?: TReport[];
 
   onSelectReport?: (report: TReport) => void;
-  onSelectSupportLocation?: (
-    location: SupportLocation,
-  ) => void;
+  onSelectSupportLocation?: (location: SupportLocation) => void;
 
-  // Novo: selecionar o local de um relato tocando no mapa.
+  // Compatibilidade com as duas branches.
   onMapPress?: (coordinates: Coordinates) => void;
-
-  // Novo: mostra qual local está selecionado para criação.
-  selectedLocation?: Coordinates | null;
+  onMapClick?: (coordinates: Coordinates) => void;
 
   interactive?: boolean;
   cameraRevision?: number;
@@ -94,14 +102,11 @@ const TILE_PROVIDERS: Record<
   },
 };
 
-// O Leaflet continua sendo carregado apenas na Web.
-// Uma única Promise evita scripts duplicados.
 let leafletPromise: Promise<any> | null = null;
 
 function loadLeaflet(): Promise<any> {
   if (!document.getElementById("leaflet-css")) {
     const link = document.createElement("link");
-
     link.id = "leaflet-css";
     link.rel = "stylesheet";
     link.href =
@@ -162,21 +167,24 @@ function loadLeaflet(): Promise<any> {
   return leafletPromise;
 }
 
-// Conteúdo de usuário entra como texto, não como HTML.
 function createPopup(title: string, description?: string) {
   const container = document.createElement("div");
+
   container.style.cssText =
     "font-family:system-ui,sans-serif;min-width:160px;padding:4px;";
 
   const heading = document.createElement("strong");
   heading.style.color = "#593582";
   heading.textContent = title;
+
   container.appendChild(heading);
 
   if (description) {
     const paragraph = document.createElement("p");
+
     paragraph.style.cssText =
       "font-size:12px;line-height:18px;margin:6px 0 0;color:#475569;";
+
     paragraph.textContent = description;
     container.appendChild(paragraph);
   }
@@ -203,7 +211,7 @@ function createMarkerIcon(
     align-items: center;
     justify-content: center;
     font: 800 16px system-ui, sans-serif;
-    box-shadow: 0 3px 10px rgba(30, 20, 45, 0.25);
+    box-shadow: 0 3px 10px rgba(30,20,45,0.25);
   `;
 
   element.textContent = symbol;
@@ -223,6 +231,9 @@ export function RiskMap<
   zoom = 15,
   userLocation,
   selectedLocation,
+  destinationLocation,
+  routes = [],
+  selectedRouteId,
   mapStyle = "clean",
   supportLocations = [],
   riskZones = [],
@@ -230,17 +241,22 @@ export function RiskMap<
   onSelectReport,
   onSelectSupportLocation,
   onMapPress,
+  onMapClick,
   interactive = true,
   cameraRevision = 0,
 }: RiskMapProps<TReport>) {
+  const { colors, isDark } = useAppTheme();
+
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  // `any` fica restrito à integração com o script externo.
   const mapRef = useRef<any>(null);
   const leafletRef = useRef<any>(null);
   const tileRef = useRef<any>(null);
   const markersRef = useRef<any>(null);
   const zonesRef = useRef<any>(null);
+  const routesRef = useRef<any>(null);
+
+  const fittedRouteRef = useRef<string | null>(null);
 
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
@@ -250,6 +266,7 @@ export function RiskMap<
     onSelectReport,
     onSelectSupportLocation,
     onMapPress,
+    onMapClick,
     interactive,
   });
 
@@ -260,12 +277,14 @@ export function RiskMap<
       onSelectReport,
       onSelectSupportLocation,
       onMapPress,
+      onMapClick,
       interactive,
     };
   }, [
     onSelectReport,
     onSelectSupportLocation,
     onMapPress,
+    onMapClick,
     interactive,
   ]);
 
@@ -273,7 +292,6 @@ export function RiskMap<
     initialViewRef.current = { center, zoom };
   }, [center, zoom]);
 
-  // Inicialização e limpeza.
   useEffect(() => {
     if (Platform.OS !== "web") return;
 
@@ -302,8 +320,15 @@ export function RiskMap<
 
         leafletRef.current = L;
         mapRef.current = ownedMap;
+
         markersRef.current = L.layerGroup().addTo(ownedMap);
         zonesRef.current = L.layerGroup().addTo(ownedMap);
+        routesRef.current = L.layerGroup().addTo(ownedMap);
+
+        const routePane =
+          ownedMap.createPane("report-routes");
+
+        routePane.style.zIndex = "450";
 
         ownedMap.on("click", (event: any) => {
           const callbacks = callbacksRef.current;
@@ -318,7 +343,9 @@ export function RiskMap<
           };
 
           if (isValidCoordinates(coordinates)) {
-            callbacks.onMapPress?.(coordinates);
+            // Executa somente um callback.
+            (callbacks.onMapPress ??
+              callbacks.onMapClick)?.(coordinates);
           }
         });
 
@@ -355,6 +382,8 @@ export function RiskMap<
           mapRef.current = null;
           markersRef.current = null;
           zonesRef.current = null;
+          routesRef.current = null;
+          fittedRouteRef.current = null;
           tileRef.current = null;
           leafletRef.current = null;
         }
@@ -362,7 +391,6 @@ export function RiskMap<
     };
   }, [attempt]);
 
-  // A câmera só muda quando center ou zoom mudam.
   useEffect(() => {
     if (!ready || !mapRef.current) return;
     if (!isValidCoordinates(center)) return;
@@ -380,16 +408,13 @@ export function RiskMap<
     cameraRevision,
   ]);
 
-  // Estilo dos tiles.
   useEffect(() => {
     if (!ready || !mapRef.current) return;
 
     const L = leafletRef.current;
     const provider = TILE_PROVIDERS[mapStyle];
 
-    if (tileRef.current) {
-      tileRef.current.remove();
-    }
+    tileRef.current?.remove();
 
     tileRef.current = L.tileLayer(provider.url, {
       attribution: provider.attribution,
@@ -397,7 +422,6 @@ export function RiskMap<
     }).addTo(mapRef.current);
   }, [ready, mapStyle]);
 
-  // Habilita/desabilita os controles de interação.
   useEffect(() => {
     if (!ready || !mapRef.current) return;
 
@@ -420,7 +444,6 @@ export function RiskMap<
     });
   }, [ready, interactive]);
 
-  // Relatos, usuária, seleção e locais de apoio.
   useEffect(() => {
     if (!ready || !markersRef.current) return;
 
@@ -429,7 +452,10 @@ export function RiskMap<
 
     layer.clearLayers();
 
-    if (userLocation && isValidCoordinates(userLocation)) {
+    if (
+      userLocation &&
+      isValidCoordinates(userLocation)
+    ) {
       L.circleMarker(
         [userLocation.latitude, userLocation.longitude],
         {
@@ -462,10 +488,49 @@ export function RiskMap<
       ).addTo(layer);
     }
 
+    if (
+      destinationLocation &&
+      isValidCoordinates(destinationLocation)
+    ) {
+      const destination = document.createElement("div");
+
+      destination.style.cssText =
+        "width:32px;height:32px;box-sizing:border-box;" +
+        "background:#8055B5;border:3px solid white;" +
+        "border-radius:50% 50% 50% 0;transform:rotate(-45deg);" +
+        "display:flex;align-items:center;justify-content:center;" +
+        "box-shadow:0 4px 14px rgba(128,85,181,.55)";
+
+      const dot = document.createElement("div");
+      dot.style.cssText =
+        "width:10px;height:10px;background:white;border-radius:50%";
+
+      destination.appendChild(dot);
+
+      L.marker(
+        [
+          destinationLocation.latitude,
+          destinationLocation.longitude,
+        ],
+        {
+          icon: L.divIcon({
+            className: "",
+            html: destination,
+            iconSize: [34, 42],
+            iconAnchor: [17, 36],
+          }),
+          zIndexOffset: 1100,
+          keyboard: interactive,
+          interactive,
+          bubblingMouseEvents: false,
+        },
+      )
+        .bindPopup(createPopup("Destino da rota"))
+        .addTo(layer);
+    }
+
     reports.forEach((report) => {
       if (!isValidCoordinates(report.location)) return;
-
-      const category = getCategoryStyle(report.category);
 
       const marker = L.marker(
         [
@@ -483,7 +548,8 @@ export function RiskMap<
       ).addTo(layer);
 
       marker.on("click", () => {
-        const callback = callbacksRef.current.onSelectReport;
+        const callback =
+          callbacksRef.current.onSelectReport;
 
         if (callback) {
           callback(report);
@@ -492,7 +558,8 @@ export function RiskMap<
             .bindPopup(
               createPopup(
                 report.category,
-                report.description || "Sem descrição adicional.",
+                report.description ||
+                  "Sem descrição adicional.",
               ),
             )
             .openPopup();
@@ -546,11 +613,107 @@ export function RiskMap<
     reports,
     userLocation,
     selectedLocation,
+    destinationLocation,
     supportLocations,
     interactive,
   ]);
 
-  // Zonas são independentes dos relatos.
+  useEffect(() => {
+    if (!ready || !routesRef.current) return;
+
+    const L = leafletRef.current;
+    const layer = routesRef.current;
+
+    layer.clearLayers();
+
+    const validRoutes = routes.filter(
+      (route) =>
+        route.coordinates.length >= 2 &&
+        route.coordinates.every(isValidCoordinates),
+    );
+
+    const active =
+      validRoutes.find(
+        (route) => route.id === selectedRouteId,
+      ) ??
+      validRoutes.find((route) => route.isSelected) ??
+      validRoutes[0];
+
+    if (!active) {
+      fittedRouteRef.current = null;
+      return;
+    }
+
+    const baseOptions = {
+      pane: "report-routes",
+      lineCap: "round",
+      lineJoin: "round",
+      interactive: false,
+    };
+
+    validRoutes
+      .filter((route) => route.id !== active.id)
+      .forEach((route) => {
+        L.polyline(
+          route.coordinates.map((point) => [
+            point.latitude,
+            point.longitude,
+          ]),
+          {
+            ...baseOptions,
+            color: isDark ? "#6D28D9" : "#C4B5FD",
+            weight: route.weight ?? 4,
+            opacity: route.opacity ?? 0.7,
+          },
+        ).addTo(layer);
+      });
+
+    const coordinates = active.coordinates.map(
+      (point) => [point.latitude, point.longitude],
+    );
+
+    L.polyline(coordinates, {
+      ...baseOptions,
+      color: isDark ? "#1E1630" : "#2E1065",
+      weight: (active.weight ?? 5) + 3,
+      opacity: 0.9,
+    }).addTo(layer);
+
+    const mainLine = L.polyline(coordinates, {
+      ...baseOptions,
+      color: isDark ? "#C4A5F3" : "#5B21B6",
+      weight: active.weight ?? 5,
+      opacity: active.opacity ?? 1,
+    }).addTo(layer);
+
+    const viewportKey = JSON.stringify([
+      active.id,
+      coordinates,
+    ]);
+
+    if (fittedRouteRef.current !== viewportKey) {
+      try {
+        mapRef.current.fitBounds(
+          mainLine.getBounds(),
+          {
+            paddingTopLeft: [70, 40],
+            paddingBottomRight: [40, 260],
+            maxZoom: 16,
+          },
+        );
+
+        fittedRouteRef.current = viewportKey;
+      } catch {
+        // O container pode estar mudando de tamanho.
+      }
+    }
+  }, [
+    ready,
+    routes,
+    selectedRouteId,
+    isDark,
+  ]);
+
   useEffect(() => {
     if (!ready || !zonesRef.current) return;
 
@@ -579,15 +742,20 @@ export function RiskMap<
 
       if (zone.polygon_coordinates?.length) {
         shape = L.polygon(
-          zone.polygon_coordinates.map((coordinate) => [
-            coordinate.latitude,
-            coordinate.longitude,
-          ]),
+          zone.polygon_coordinates.map(
+            (coordinate) => [
+              coordinate.latitude,
+              coordinate.longitude,
+            ],
+          ),
           options,
         );
       } else if (zone.center) {
         shape = L.circle(
-          [zone.center.latitude, zone.center.longitude],
+          [
+            zone.center.latitude,
+            zone.center.longitude,
+          ],
           {
             ...options,
             radius: zone.radius_meters || 250,
@@ -610,11 +778,27 @@ export function RiskMap<
 
   if (Platform.OS !== "web") {
     return (
-      <View style={s.fallback}>
-        <Text style={s.fallbackTitle}>
+      <View
+        style={[
+          s.fallback,
+          { backgroundColor: colors.screenBackground },
+        ]}
+      >
+        <Text
+          style={[
+            s.fallbackTitle,
+            { color: colors.text },
+          ]}
+        >
           Mapa disponível na versão web
         </Text>
-        <Text style={s.fallbackText}>
+
+        <Text
+          style={[
+            s.fallbackText,
+            { color: colors.textMuted },
+          ]}
+        >
           A implementação nativa do mapa pode ser conectada
           aos mesmos dados e callbacks.
         </Text>
@@ -638,19 +822,26 @@ export function RiskMap<
       {!ready && !error && (
         <View style={s.status}>
           <ActivityIndicator color="#8055B5" />
-          <Text style={s.fallbackText}>Carregando mapa…</Text>
+          <Text style={s.fallbackText}>
+            Carregando mapa…
+          </Text>
         </View>
       )}
 
       {!!error && (
         <View style={s.status}>
           <Text style={s.fallbackText}>{error}</Text>
+
           <Pressable
             accessibilityRole="button"
-            onPress={() => setAttempt((value) => value + 1)}
+            onPress={() =>
+              setAttempt((value) => value + 1)
+            }
             style={s.retry}
           >
-            <Text style={s.retryText}>Tentar novamente</Text>
+            <Text style={s.retryText}>
+              Tentar novamente
+            </Text>
           </Pressable>
         </View>
       )}
