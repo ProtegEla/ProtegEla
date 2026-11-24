@@ -44,7 +44,9 @@ Antes de iniciar o backend, preencha em `backend/.env`:
 - `FIELD_LOOKUP_KEY`: segredo não vazio usado para buscar e-mails e identificar tentativas de login.
 - `APP_SECRET_KEY`: assina os tokens JWT. Use um segredo próprio do ambiente.
 
-Em um **ambiente novo**, com as dependências instaladas, gere uma chave Fernet:
+Para o **Supabase compartilhado**, obtenha as três chaves existentes com a equipe,
+conforme a seção 3.2; não gere outras. Em um **ambiente local novo e independente**,
+com as dependências instaladas, gere uma chave Fernet:
 
 ```bash
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
@@ -100,9 +102,141 @@ CREATE EXTENSION IF NOT EXISTS postgis;
 > [!TIP]
 > Caso utilize outro usuário ou senha no seu PostgreSQL local, ajuste as variáveis `POSTGRES_USER`, `POSTGRES_PASSWORD`, `DATABASE_URL` e `DATABASE_SYNC_URL` no arquivo `backend/.env`.
 
+`POSTGRES_*` não monta as URLs automaticamente: o backend lê `DATABASE_URL` e
+o Alembic lê `DATABASE_SYNC_URL` diretamente.
+
+### 3.2. Usar o Supabase compartilhado da equipe
+
+Este é o ambiente de desenvolvimento compartilhado, inicialmente apenas com dados
+fictícios. Para usá-lo, não execute os comandos de criação do banco local acima.
+
+| Configuração | Valor |
+| --- | --- |
+| Projeto / referência | `protegela-dev` / `ddydjthhtanqbaaotsse` |
+| Região | São Paulo |
+| Banco e extensão | PostgreSQL 17.12 / PostGIS 3.3.7 em `extensions` |
+| Host direto / porta | `db.ddydjthhtanqbaaotsse.supabase.co` / `5432` |
+| Banco / role da aplicação | `postgres` / `protegela_app` |
+| Schema / search_path | `public` / `public, extensions` |
+
+#### Credenciais, chaves e certificado
+
+1. Peça a um integrante autorizado acesso ao cofre da equipe ou o compartilhamento
+   seguro da senha de `protegela_app` e das três chaves do ambiente:
+   `FIELD_ENCRYPTION_KEY`, `FIELD_LOOKUP_KEY` e `APP_SECRET_KEY`. Não envie esses
+   valores por issues, PRs, logs ou capturas de tela.
+2. Guarde-os no seu arquivo privado `backend/.env`, que não deve ser versionado.
+   Se já utiliza um arquivo privado fora do repositório, pode mantê-lo e carregar
+   os valores no ambiente do processo antes de iniciar o Python. Não sobrescreva
+   configurações locais sem guardar sua configuração anterior de forma segura.
+3. Com acesso ao painel do projeto, abra **Database → Settings → SSL Configuration**
+   e baixe o certificado CA, conforme a [documentação de SSL do Supabase](https://supabase.com/docs/guides/platform/ssl-enforcement).
+   Se não tiver acesso, peça o certificado ao responsável pelo projeto. Salve-o, por exemplo, em
+   `~/.config/protegela/protegela-dev-ca.crt`; adapte o caminho à sua máquina.
+
+**As três chaves devem ser idênticas em todas as instâncias e permanecer estáveis.**
+Não use as chaves fictícias dos testes. Perder ou trocar a chave Fernet impede ler
+os dados já cifrados; trocar a chave de lookup impede encontrar e-mails existentes;
+trocar a chave JWT invalida os tokens anteriores. Guarde uma cópia no cofre da equipe.
+
+A senha de `protegela_app` é independente da senha administrativa de `postgres`.
+**Nunca forneça a senha administrativa ao FastAPI.** A Data API permanece
+desativada e o SSL Enforcement permanece habilitado no Supabase; não utilizamos
+Supabase Auth.
+
+#### Conexão do FastAPI com asyncpg
+
+No seu `backend/.env` privado, ajuste `DATABASE_URL` e `DEBUG`:
+
+```dotenv
+# Substitua o marcador pela senha da aplicação codificada para URL.
+DATABASE_URL=postgresql+asyncpg://protegela_app:<SENHA_CODIFICADA>@db.ddydjthhtanqbaaotsse.supabase.co:5432/postgres?ssl=verify-full
+DEBUG=false
+```
+
+Preencha também as três chaves com os valores existentes obtidos da equipe.
+Caracteres especiais da senha precisam de codificação percentual na URL
+(por exemplo, `@` vira `%40` e `%` vira `%25`). Não use um codificador online para
+senhas nem imprima a URL preenchida no terminal. Alterar `POSTGRES_*` não substitui
+essa configuração. O FastAPI utiliza `DATABASE_URL`; ele não precisa da conexão
+administrativa `DATABASE_SYNC_URL` para atender requisições.
+
+No **mesmo terminal que iniciará o backend**, exporte as opções do asyncpg:
+
+```bash
+export PGSSLROOTCERT="$HOME/.config/protegela/protegela-dev-ca.crt"
+export PGSSLMINPROTOCOLVERSION=TLSv1.2
+```
+
+O certificado precisa existir e estar legível nesse caminho. Apenas escrever
+`PGSSLROOTCERT` no `.env` lido pelo Pydantic **não funciona**: o asyncpg consulta o
+ambiente real do processo Python. Se iniciar por uma IDE ou outro terminal,
+configure essas variáveis também nesse ambiente. Variáveis já exportadas têm
+prioridade sobre o `.env`; confira se não ficou uma configuração de outro banco.
+
+`ssl=verify-full` exige validação do certificado e do hostname. Não troque por
+`require`, `prefer` nem desative TLS para contornar erros. A conexão direta depende
+de conectividade IPv6; se sua rede não permitir conectar, consulte o responsável
+antes de configurar um Session Pooler com os parâmetros reais do projeto.
+
+Com o ambiente virtual e as dependências da seção 5 preparados, inicie dentro de
+`backend/`, nesse terminal:
+
+```bash
+uvicorn src.main:app --host 127.0.0.1 --port 8000 --no-access-log
+```
+
+Esse comando não executa migrações. Evite logs de requisições ou depuração com
+tokens, dados pessoais ou coordenadas. Para validar a conexão sem gravar dados:
+
+```bash
+curl --fail http://127.0.0.1:8000/api/v1/safety-guides
+```
+
+O endpoint é público e consulta o banco: deve retornar HTTP 200 e `data` com as
+três orientações educativas iniciais. `/api/v1/health` verifica o processo da API,
+mas sua resposta sozinha não comprova a conexão com o PostgreSQL.
+
+#### Alembic: somente para responsáveis pelas migrações
+
+O banco compartilhado já foi preparado até `d54d18c82688`. Novos integrantes não
+precisam reaplicar as migrações. Qualquer alteração deve ser coordenada com os
+responsáveis, que usam `postgres` via `psycopg2`, separado da configuração do FastAPI.
+
+O formato de `DATABASE_SYNC_URL` para esse processo administrativo é:
+
+```text
+postgresql+psycopg2://postgres:<SENHA_ADMIN_CODIFICADA>@db.ddydjthhtanqbaaotsse.supabase.co:5432/postgres?sslmode=verify-full&sslrootcert=/caminho/para/protegela-dev-ca.crt&ssl_min_protocol_version=TLSv1.2&options=-csearch_path%3Dpublic%2Cextensions
+```
+
+Adapte o caminho do CA e codifique caracteres especiais da senha e do caminho na
+URL. Diferentemente do asyncpg, o psycopg2 recebe `sslmode=verify-full` e
+`sslrootcert` diretamente na URL. O parâmetro `options` configura
+`search_path=public,extensions` nessa conexão; o Alembic preserva os percentuais
+codificados ao passar a URL para sua configuração.
+
+Disponibilize a URL somente no processo administrativo, usando senha solicitada
+interativamente e URL construída em memória, sem colocá-la em comandos, histórico
+do terminal ou arquivos compartilhados. Carregue as três chaves estáveis e
+`DEBUG=false` antes de importar as configurações do backend. Não mantenha essa URL
+no ambiente dos servidores FastAPI e não execute migrações como `protegela_app`.
+
+#### Testes continuam no banco local
+
+**Nunca execute pytest, fixtures de limpeza, downgrades ou testes destrutivos no
+Supabase compartilhado.** Use outro terminal e exclusivamente `protegela_test` no
+PostgreSQL local com PostGIS. Antes de executar a suíte, confira as quatro URLs:
+`DATABASE_URL` e `TEST_DATABASE_URL` com `asyncpg`; `DATABASE_SYNC_URL` e
+`TEST_DATABASE_SYNC_URL` com `psycopg2`. Todas devem apontar para
+`127.0.0.1:5432/protegela_test`, sem configurações herdadas do Supabase. As chaves
+fictícias da suíte não devem substituir as chaves do ambiente compartilhado.
+
 ---
 
 ## 4. Migrações de Banco de Dados com Alembic
+
+Os comandos desta seção são para o **banco local**. Não os execute com URLs do
+Supabase; a manutenção do banco compartilhado segue a seção 3.2.
 
 > [!NOTE]
 > O modelo `Report` e a migração `0001_create_reports` já estão definidos. O ambiente Alembic registra o modelo e exclui tabelas internas das extensões espaciais da comparação automática. A migração requer PostGIS habilitado previamente. Aplicação, comparação com o modelo (`alembic check`), reversão e reaplicação foram verificadas no banco local `protegela_test`, com PostgreSQL 16 e PostGIS 3.6.

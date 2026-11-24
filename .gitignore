@@ -80,3 +80,4 @@ logs/
 *.log
 tmp/
 temp/
+supabase/.temp/
