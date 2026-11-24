@@ -1,11 +1,37 @@
-import React, { useEffect, useRef } from "react";
-import { View, StyleSheet, Platform, ActivityIndicator, Text } from "react-native";
-import { Coordinates, SupportLocation, RiskZoneFeature } from "../types";
-import { Report } from "../../../types/report";
-import { colors } from "../../../theme/colors";
+import React, { useEffect, useRef, useState } from "react";
+
+import {
+  ActivityIndicator,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
+
+import type {
+  Coordinates,
+  SupportLocation,
+  RiskZoneFeature,
+} from "../types";
+
+import {
+  isValidCoordinates,
+  type RiskMapReport,
+} from "../../reports/reportModel";
+
 import { useAppTheme } from "../../../theme";
 
-export type MapTileStyle = "clean" | "clean_dark" | "streets" | "satellite";
+import {
+  createReportMarkerIcon,
+  createSelectedLocationIcon,
+} from "../../reports/mapMarkerIcons";
+
+export type MapTileStyle =
+  | "clean"
+  | "clean_dark"
+  | "streets"
+  | "satellite";
 
 export interface MapRoutePolyline {
   id: string;
@@ -16,54 +42,191 @@ export interface MapRoutePolyline {
   isSelected?: boolean;
 }
 
-export interface RiskMapProps {
+export interface RiskMapProps<
+  TReport extends RiskMapReport = RiskMapReport,
+> {
   center: Coordinates;
   zoom?: number;
   userLocation?: Coordinates | null;
   selectedLocation?: Coordinates | null;
   destinationLocation?: Coordinates | null;
+
   routes?: MapRoutePolyline[];
   selectedRouteId?: string | null;
+
   mapStyle?: MapTileStyle;
   supportLocations?: SupportLocation[];
   riskZones?: RiskZoneFeature[];
-  reports?: Report[];
-  onSelectReport?: (report: Report) => void;
+  reports?: TReport[];
+
+  onSelectReport?: (report: TReport) => void;
   onSelectSupportLocation?: (location: SupportLocation) => void;
-  onMapClick?: (coords: Coordinates) => void;
+
+  // Compatibilidade com as duas branches.
+  onMapPress?: (coordinates: Coordinates) => void;
+  onMapClick?: (coordinates: Coordinates) => void;
+
   interactive?: boolean;
+  cameraRevision?: number;
 }
 
-const TILE_PROVIDERS: Record<MapTileStyle, { url: string; attribution: string }> = {
-  // 1. Clean Claro Minimalista Elegante (Stadia Alidade Smooth)
-  // 100% minimalista, sem poluição de cores saturadas
+const TILE_PROVIDERS: Record<
+  MapTileStyle,
+  { url: string; attribution: string }
+> = {
   clean: {
-    url: "https://tiles.stadiamaps.com/tiles/alidade_smooth/{z}/{x}/{y}{r}.png",
-    attribution: "",
+    url:
+      "https://tiles.stadiamaps.com/tiles/alidade_smooth/{z}/{x}/{y}{r}.png",
+    attribution:
+      '&copy; <a href="https://stadiamaps.com/">Stadia Maps</a> ' +
+      '&copy; <a href="https://openmaptiles.org/">OpenMapTiles</a> ' +
+      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
   },
-  // 2. Clean Escuro Noturno (Stadia Alidade Smooth Dark)
   clean_dark: {
-    url: "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png",
-    attribution: "",
+    url:
+      "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png",
+    attribution:
+      '&copy; <a href="https://stadiamaps.com/">Stadia Maps</a> ' +
+      '&copy; <a href="https://openmaptiles.org/">OpenMapTiles</a> ' +
+      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
   },
-  // 3. Ruas e Estabelecimentos (OSM Oficial)
   streets: {
     url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-    attribution: "",
+    attribution:
+      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
   },
-  // 4. Imagem real de Satélite / Aérea (Esri World Imagery)
   satellite: {
-    url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-    attribution: "",
+    url:
+      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    attribution: "Tiles &copy; Esri",
   },
 };
 
-/**
- * Componente unificado de Mapa interativo para Web e Mobile.
- * Na Web, utiliza Leaflet.js injetado via container DOM dinâmico com suporte
- * a polígonos, círculos de calor vetoriais e marcadores estilizados.
- */
-export const RiskMap: React.FC<RiskMapProps> = ({
+let leafletPromise: Promise<any> | null = null;
+
+function loadLeaflet(): Promise<any> {
+  if (!document.getElementById("leaflet-css")) {
+    const link = document.createElement("link");
+    link.id = "leaflet-css";
+    link.rel = "stylesheet";
+    link.href =
+      "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+
+    document.head.appendChild(link);
+  }
+
+  if ((window as any).L) {
+    return Promise.resolve((window as any).L);
+  }
+
+  if (leafletPromise) return leafletPromise;
+
+  leafletPromise = new Promise((resolve, reject) => {
+    const existing = document.getElementById(
+      "leaflet-js",
+    ) as HTMLScriptElement | null;
+
+    const script =
+      existing ?? document.createElement("script");
+
+    script.addEventListener(
+      "load",
+      () => {
+        const L = (window as any).L;
+
+        if (L) {
+          resolve(L);
+        } else {
+          leafletPromise = null;
+          script.remove();
+          reject(new Error("Leaflet indisponível."));
+        }
+      },
+      { once: true },
+    );
+
+    script.addEventListener(
+      "error",
+      () => {
+        leafletPromise = null;
+        script.remove();
+        reject(new Error("Falha ao carregar o mapa."));
+      },
+      { once: true },
+    );
+
+    if (!existing) {
+      script.id = "leaflet-js";
+      script.src =
+        "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+
+      document.head.appendChild(script);
+    }
+  });
+
+  return leafletPromise;
+}
+
+function createPopup(title: string, description?: string) {
+  const container = document.createElement("div");
+
+  container.style.cssText =
+    "font-family:system-ui,sans-serif;min-width:160px;padding:4px;";
+
+  const heading = document.createElement("strong");
+  heading.style.color = "#593582";
+  heading.textContent = title;
+
+  container.appendChild(heading);
+
+  if (description) {
+    const paragraph = document.createElement("p");
+
+    paragraph.style.cssText =
+      "font-size:12px;line-height:18px;margin:6px 0 0;color:#475569;";
+
+    paragraph.textContent = description;
+    container.appendChild(paragraph);
+  }
+
+  return container;
+}
+
+function createMarkerIcon(
+  L: any,
+  color: string,
+  symbol: string,
+) {
+  const element = document.createElement("div");
+
+  element.style.cssText = `
+    width: 32px;
+    height: 32px;
+    box-sizing: border-box;
+    border: 3px solid white;
+    border-radius: 50%;
+    background: ${color};
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font: 800 16px system-ui, sans-serif;
+    box-shadow: 0 3px 10px rgba(30,20,45,0.25);
+  `;
+
+  element.textContent = symbol;
+
+  return L.divIcon({
+    className: "",
+    html: element,
+    iconSize: [32, 32],
+    iconAnchor: [16, 16],
+  });
+}
+
+export function RiskMap<
+  TReport extends RiskMapReport = RiskMapReport,
+>({
   center,
   zoom = 15,
   userLocation,
@@ -77,511 +240,659 @@ export const RiskMap: React.FC<RiskMapProps> = ({
   reports = [],
   onSelectReport,
   onSelectSupportLocation,
+  onMapPress,
   onMapClick,
-}) => {
-  const { isDark } = useAppTheme();
-  const mapContainerRef = useRef<any>(null);
-  const leafletMapInstanceRef = useRef<any>(null);
-  const tileLayerRef = useRef<any>(null);
-  const markersLayerRef = useRef<any>(null);
-  const zonesLayerRef = useRef<any>(null);
-  const routesLayerRef = useRef<any>(null);
-  const onMapClickRef = useRef(onMapClick);
-  onMapClickRef.current = onMapClick;
+  interactive = true,
+  cameraRevision = 0,
+}: RiskMapProps<TReport>) {
+  const { colors, isDark } = useAppTheme();
+
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  const mapRef = useRef<any>(null);
+  const leafletRef = useRef<any>(null);
+  const tileRef = useRef<any>(null);
+  const markersRef = useRef<any>(null);
+  const zonesRef = useRef<any>(null);
+  const routesRef = useRef<any>(null);
+
+  const fittedRouteRef = useRef<string | null>(null);
+
+  const [ready, setReady] = useState(false);
+  const [error, setError] = useState("");
+  const [attempt, setAttempt] = useState(0);
+
+  const callbacksRef = useRef({
+    onSelectReport,
+    onSelectSupportLocation,
+    onMapPress,
+    onMapClick,
+    interactive,
+  });
+
+  const initialViewRef = useRef({ center, zoom });
 
   useEffect(() => {
-    if (Platform.OS !== "web") {
-      return;
-    }
-
-    // Carregar CSS do Leaflet se ainda não existir
-    if (!document.getElementById("leaflet-css")) {
-      const link = document.createElement("link");
-      link.id = "leaflet-css";
-      link.rel = "stylesheet";
-      link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
-      document.head.appendChild(link);
-    }
-
-    // Carregar Script do Leaflet se ainda não existir
-    const loadLeafletScript = () => {
-      return new Promise<void>((resolve) => {
-        if ((window as any).L) {
-          resolve();
-          return;
-        }
-        const script = document.createElement("script");
-        script.id = "leaflet-js";
-        script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-        script.onload = () => resolve();
-        document.body.appendChild(script);
-      });
+    callbacksRef.current = {
+      onSelectReport,
+      onSelectSupportLocation,
+      onMapPress,
+      onMapClick,
+      interactive,
     };
+  }, [
+    onSelectReport,
+    onSelectSupportLocation,
+    onMapPress,
+    onMapClick,
+    interactive,
+  ]);
 
-    let isMounted = true;
+  useEffect(() => {
+    initialViewRef.current = { center, zoom };
+  }, [center, zoom]);
 
-    loadLeafletScript().then(() => {
-      if (!isMounted || !mapContainerRef.current) return;
-      const L = (window as any).L;
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
 
-      const provider = TILE_PROVIDERS[mapStyle] || TILE_PROVIDERS.clean;
+    let active = true;
+    let ownedMap: any;
+    let observer: ResizeObserver | undefined;
 
-      // Se o mapa ainda não foi inicializado
-      if (!leafletMapInstanceRef.current) {
-        const map = L.map(mapContainerRef.current, {
-          center: [center.latitude, center.longitude],
-          zoom,
-          zoomControl: false, // Desativa os botões nativos +/- de zoom
-          attributionControl: false, // Remove a barra de créditos inferior
+    setReady(false);
+    setError("");
+
+    loadLeaflet()
+      .then((L) => {
+        if (!active || !containerRef.current) return;
+
+        const initial = initialViewRef.current;
+
+        ownedMap = L.map(containerRef.current, {
+          center: [
+            initial.center.latitude,
+            initial.center.longitude,
+          ],
+          zoom: initial.zoom,
+          zoomControl: false,
+          attributionControl: true,
         });
 
-        // Adiciona camada de tiles conforme o estilo escolhido
-        const tileLayer = L.tileLayer(provider.url, {
-          attribution: "",
-          maxZoom: 19,
-        }).addTo(map);
+        leafletRef.current = L;
+        mapRef.current = ownedMap;
 
-        const markersLayer = L.layerGroup().addTo(map);
-        const zonesLayer = L.layerGroup().addTo(map);
-        const routesLayer = L.layerGroup().addTo(map);
+        markersRef.current = L.layerGroup().addTo(ownedMap);
+        zonesRef.current = L.layerGroup().addTo(ownedMap);
+        routesRef.current = L.layerGroup().addTo(ownedMap);
 
-        map.on("click", (e: any) => {
-          if (onMapClickRef.current && e?.latlng) {
-            onMapClickRef.current({
-              latitude: Number(e.latlng.lat),
-              longitude: Number(e.latlng.lng),
-            });
+        const routePane =
+          ownedMap.createPane("report-routes");
+
+        routePane.style.zIndex = "450";
+
+        ownedMap.on("click", (event: any) => {
+          const callbacks = callbacksRef.current;
+
+          if (!callbacks.interactive) return;
+
+          const position = event.latlng.wrap();
+
+          const coordinates: Coordinates = {
+            latitude: position.lat,
+            longitude: position.lng,
+          };
+
+          if (isValidCoordinates(coordinates)) {
+            // Executa somente um callback.
+            (callbacks.onMapPress ??
+              callbacks.onMapClick)?.(coordinates);
           }
         });
 
-        leafletMapInstanceRef.current = map;
-        tileLayerRef.current = tileLayer;
-        markersLayerRef.current = markersLayer;
-        zonesLayerRef.current = zonesLayer;
-        routesLayerRef.current = routesLayer;
-      } else {
-        // Atualiza a posição da visualização com animação suave
-        leafletMapInstanceRef.current.flyTo([center.latitude, center.longitude], zoom, {
-          duration: 1.2,
-        });
-
-        // Atualizar camada de tiles se o estilo mudar
-        if (tileLayerRef.current && tileLayerRef.current._url !== provider.url) {
-          tileLayerRef.current.setUrl(provider.url);
-        }
-      }
-
-      const L_instance = (window as any).L;
-      if (!L_instance) return;
-
-      const markersLayer = markersLayerRef.current;
-      const zonesLayer = zonesLayerRef.current;
-      let routesLayer = routesLayerRef.current;
-
-      if (!routesLayer && leafletMapInstanceRef.current) {
-        routesLayer = L_instance.layerGroup().addTo(leafletMapInstanceRef.current);
-        routesLayerRef.current = routesLayer;
-      }
-
-      if (!markersLayer || !zonesLayer) return;
-
-      markersLayer.clearLayers();
-      zonesLayer.clearLayers();
-      if (routesLayer) {
-        routesLayer.clearLayers();
-      }
-
-      // Marcador da Usuária (Ponto roxo/azul pulsante de alta visibilidade)
-      if (userLocation) {
-        const userIcon = L_instance.divIcon({
-          className: "user-loc-icon",
-          html: `<div style="
-            position: relative;
-            width: 24px; 
-            height: 24px; 
-            background: #7C3AED; 
-            border: 3px solid #ffffff; 
-            border-radius: 50%; 
-            box-shadow: 0 0 12px rgba(124, 58, 237, 0.7);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-          ">
-            <div style="
-              width: 8px;
-              height: 8px;
-              background: #ffffff;
-              border-radius: 50%;
-            "></div>
-          </div>`,
-          iconSize: [24, 24],
-          iconAnchor: [12, 12],
-        });
-
-        L_instance.marker([userLocation.latitude, userLocation.longitude], {
-          icon: userIcon,
-          zIndexOffset: 1000,
-        })
-          .bindPopup("<b style='font-family: sans-serif; color: #7C3AED;'>Você está aqui</b>")
-          .addTo(markersLayer);
-      }
-
-      // Marcador de Ponto Selecionado / Endereço Pesquisado
-      if (selectedLocation) {
-        const selIcon = L_instance.divIcon({
-          className: "selected-pin-icon",
-          html: `<div style="
-            position: relative;
-            width: 32px;
-            height: 38px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            cursor: pointer;
-          ">
-            <div style="
-              width: 30px;
-              height: 30px;
-              background: #9333EA;
-              border-radius: 50% 50% 50% 0;
-              transform: rotate(-45deg);
-              border: 2px solid #FFFFFF;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              box-shadow: 0 4px 12px rgba(147, 51, 234, 0.45);
-            ">
-              <span style="
-                transform: rotate(45deg);
-                font-size: 15px;
-                display: block;
-              ">📍</span>
-            </div>
-          </div>`,
-          iconSize: [32, 38],
-          iconAnchor: [16, 36],
-        });
-
-        L_instance.marker([selectedLocation.latitude, selectedLocation.longitude], {
-          icon: selIcon,
-          zIndexOffset: 900,
-        })
-          .bindPopup("<b style='font-family: sans-serif; color: #9333EA;'>Local Selecionado</b>")
-          .addTo(markersLayer);
-      }
-
-      // Marcador de Destino no Modo Rota (Estilo Imagem 2 - pino roxo com centro branco)
-      if (destinationLocation) {
-        const destIcon = L_instance.divIcon({
-          className: "destination-pin-icon",
-          html: `<div style="
-            position: relative;
-            width: 34px;
-            height: 42px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-          ">
-            <div style="
-              width: 32px;
-              height: 32px;
-              background: #8055B5;
-              border-radius: 50% 50% 50% 0;
-              transform: rotate(-45deg);
-              border: 3px solid #FFFFFF;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              box-shadow: 0 4px 14px rgba(128, 85, 181, 0.55);
-            ">
-              <div style="
-                width: 10px;
-                height: 10px;
-                background: #FFFFFF;
-                border-radius: 50%;
-              "></div>
-            </div>
-          </div>`,
-          iconSize: [34, 42],
-          iconAnchor: [17, 40],
-        });
-
-        L_instance.marker([destinationLocation.latitude, destinationLocation.longitude], {
-          icon: destIcon,
-          zIndexOffset: 950,
-        })
-          .bindPopup("<b style='font-family: sans-serif; color: #8055B5;'>Destino da Rota</b>")
-          .addTo(markersLayer);
-      }
-
-      // Renderizar Trajetos de Rotas no Mapa (Polylines em Roxo Conforme o Tema)
-      if (routes && routes.length > 0 && routesLayer) {
-        let activePolylineToFit: any = null;
-
-        // Renderiza primeiro as rotas alternativas não selecionadas (em segundo plano, lavanda suave)
-        routes
-          .filter((r) => r.id !== selectedRouteId && !r.isSelected)
-          .forEach((route) => {
-            const latLngs = route.coordinates.map((c) => [c.latitude, c.longitude]);
-            if (latLngs.length >= 2) {
-              L_instance.polyline(latLngs, {
-                color: isDark ? "#6D28D9" : "#C4B5FD",
-                weight: route.weight || 4,
-                opacity: 0.7,
-                lineCap: "round",
-                lineJoin: "round",
-              }).addTo(routesLayer);
-            }
+        if (typeof ResizeObserver !== "undefined") {
+          observer = new ResizeObserver(() => {
+            if (active) ownedMap.invalidateSize();
           });
 
-        // Renderiza a rota ativa selecionada com destaque máximo:
-        // No tema claro: roxo escuro (#5B21B6)
-        // No tema escuro: roxo vibrante (#C4A5F3)
-        const activeRoute =
-          routes.find((r) => r.id === selectedRouteId) ||
-          routes.find((r) => r.isSelected) ||
-          routes[0];
-
-        if (activeRoute) {
-          const latLngs = activeRoute.coordinates.map((c) => [c.latitude, c.longitude]);
-          if (latLngs.length >= 2) {
-            const coreColor = isDark ? "#C4A5F3" : "#5B21B6";
-            const casingColor = isDark ? "#1E1630" : "#2E1065";
-
-            // Casing externo escuro para contraste perfeito contra as ruas
-            L_instance.polyline(latLngs, {
-              color: casingColor,
-              weight: 8,
-              opacity: 0.9,
-              lineCap: "round",
-              lineJoin: "round",
-            }).addTo(routesLayer);
-
-            // Traçado principal roxo
-            activePolylineToFit = L_instance.polyline(latLngs, {
-              color: coreColor,
-              weight: 5,
-              opacity: 1.0,
-              lineCap: "round",
-              lineJoin: "round",
-            }).addTo(routesLayer);
-          }
+          observer.observe(containerRef.current);
         }
 
-        // Traz as rotas para a frente
-        if (typeof (routesLayer as any).bringToFront === "function") {
-          (routesLayer as any).bringToFront();
-        }
+        requestAnimationFrame(() => {
+          if (active) ownedMap.invalidateSize();
+        });
 
-        // Enquadra a visão do mapa para mostrar a rota completa suavemente, respeitando a barra superior e o bottom sheet inferior
-        if (activePolylineToFit && leafletMapInstanceRef.current) {
-          try {
-            leafletMapInstanceRef.current.fitBounds(activePolylineToFit.getBounds(), {
-              paddingTopLeft: [70, 40],
-              paddingBottomRight: [40, 260],
-              maxZoom: 16,
-            });
-          } catch {
-            // Ignora falha de bounds se o mapa estiver redimensionando
-          }
+        setReady(true);
+      })
+      .catch(() => {
+        if (active) {
+          setError(
+            "Não foi possível carregar o mapa. Verifique sua conexão.",
+          );
+        }
+      });
+
+    return () => {
+      active = false;
+      observer?.disconnect();
+
+      if (ownedMap) {
+        ownedMap.remove();
+
+        if (mapRef.current === ownedMap) {
+          mapRef.current = null;
+          markersRef.current = null;
+          zonesRef.current = null;
+          routesRef.current = null;
+          fittedRouteRef.current = null;
+          tileRef.current = null;
+          leafletRef.current = null;
         }
       }
+    };
+  }, [attempt]);
 
-      // Renderizar Zonas de Risco (Círculos e Polígonos Vetoriais)
-      riskZones.forEach((zone) => {
-        const color =
-          zone.risk_level === "high"
-            ? "#DC2626"
-            : zone.risk_level === "medium"
-            ? "#EA580C"
-            : "#CA8A04";
+  useEffect(() => {
+    if (!ready || !mapRef.current) return;
+    if (!isValidCoordinates(center)) return;
 
-        if (zone.polygon_coordinates && zone.polygon_coordinates.length > 0) {
-          const latLngs = zone.polygon_coordinates.map((c) => [c.latitude, c.longitude]);
-          L_instance.polygon(latLngs, {
-            color,
-            fillColor: color,
-            fillOpacity: 0.25,
-            weight: 2,
-          })
-            .bindPopup(`<b>${zone.name}</b><br/>Área de Atenção (${zone.risk_level})`)
-            .addTo(zonesLayer);
-        } else if (zone.center) {
-          L_instance.circle([zone.center.latitude, zone.center.longitude], {
-            radius: zone.radius_meters || 250,
-            color,
-            fillColor: color,
-            fillOpacity: 0.22,
-            weight: 1.5,
-          })
-            .bindPopup(`<b>${zone.name}</b><br/>Nível de Risco: ${zone.risk_level}`)
-            .addTo(zonesLayer);
-        }
-      });
+    mapRef.current.flyTo(
+      [center.latitude, center.longitude],
+      zoom,
+      { duration: 0.8 },
+    );
+  }, [
+    ready,
+    center.latitude,
+    center.longitude,
+    zoom,
+    cameraRevision,
+  ]);
 
-      // Renderizar Relatos de Perigo
-      reports.forEach((rep) => {
-        const repIcon = L_instance.divIcon({
-          className: "report-icon",
-          html: `<div style="
-            width: 28px;
-            height: 28px;
-            background: #DC2626;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-size: 14px;
-            font-weight: bold;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-            border: 2px solid white;
-          ">⚠️</div>`,
-          iconSize: [28, 28],
-          iconAnchor: [14, 14],
-        });
+  useEffect(() => {
+    if (!ready || !mapRef.current) return;
 
-        const m = L_instance.marker([rep.location.latitude, rep.location.longitude], {
-          icon: repIcon,
-        }).addTo(markersLayer);
+    const L = leafletRef.current;
+    const provider = TILE_PROVIDERS[mapStyle];
 
-        m.bindPopup(`
-          <div style="font-family: sans-serif; min-width: 140px;">
-            <strong style="color: #991B1B;">${rep.category}</strong>
-            <p style="margin: 4px 0; font-size: 12px; color: #374151;">${rep.description || "Sem descrição adicional."}</p>
-            <span style="font-size: 10px; color: #6B7280;">Confirmações: ${rep.confirmations_count}</span>
-          </div>
-        `);
+    tileRef.current?.remove();
 
-        if (onSelectReport) {
-          m.on("click", () => onSelectReport(rep));
-        }
-      });
+    tileRef.current = L.tileLayer(provider.url, {
+      attribution: provider.attribution,
+      maxZoom: 19,
+    }).addTo(mapRef.current);
+  }, [ready, mapStyle]);
 
-      // Renderizar Locais de Apoio / Delegacias com Pin Moderno Estilizado
-      supportLocations.forEach((loc) => {
-        const supIcon = L_instance.divIcon({
-          className: "support-pin",
-          html: `<div style="
-            position: relative;
-            width: 32px;
-            height: 38px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            cursor: pointer;
-          ">
-            <div style="
-              width: 32px;
-              height: 32px;
-              background: #6D4DA8;
-              border-radius: 50% 50% 50% 0;
-              transform: rotate(-45deg);
-              border: 2px solid #FFFFFF;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              box-shadow: 0 4px 10px rgba(109, 77, 168, 0.4);
-            ">
-              <span style="
-                transform: rotate(45deg);
-                font-size: 14px;
-                color: #FFFFFF;
-                display: block;
-              ">🏛️</span>
-            </div>
-          </div>`,
-          iconSize: [32, 38],
-          iconAnchor: [16, 36],
-        });
+  useEffect(() => {
+    if (!ready || !mapRef.current) return;
 
-        const m = L_instance.marker([loc.latitude, loc.longitude], {
-          icon: supIcon,
-          zIndexOffset: 500,
-        }).addTo(markersLayer);
+    const map = mapRef.current;
 
-        const distanceText = loc.distance_meters
-          ? `<div style="margin-top: 6px; font-size: 11px; font-weight: 600; color: #059669; background: #ECFDF5; padding: 2px 6px; border-radius: 4px; display: inline-block;">Aprox. ${(loc.distance_meters / 1000).toFixed(1)} km</div>`
-          : "";
+    [
+      "dragging",
+      "touchZoom",
+      "doubleClickZoom",
+      "scrollWheelZoom",
+      "boxZoom",
+      "keyboard",
+    ].forEach((name) => {
+      const handler = map[name];
 
-        m.bindPopup(`
-          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; min-width: 170px; padding: 4px;">
-            <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
-              <span style="font-size: 16px;">🛡️</span>
-              <strong style="color: #5B21B6; font-size: 13px;">${loc.name}</strong>
-            </div>
-            <p style="margin: 2px 0 0 0; font-size: 11px; color: #4B5563;">Ponto de Apoio Oficial (Polícia / Delegacia)</p>
-            ${distanceText}
-          </div>
-        `);
+      if (!handler) return;
 
-        if (onSelectSupportLocation) {
-          m.on("click", () => onSelectSupportLocation(loc));
+      if (interactive) handler.enable();
+      else handler.disable();
+    });
+  }, [ready, interactive]);
+
+  useEffect(() => {
+    if (!ready || !markersRef.current) return;
+
+    const L = leafletRef.current;
+    const layer = markersRef.current;
+
+    layer.clearLayers();
+
+    if (
+      userLocation &&
+      isValidCoordinates(userLocation)
+    ) {
+      L.circleMarker(
+        [userLocation.latitude, userLocation.longitude],
+        {
+          radius: 8,
+          color: "#FFFFFF",
+          weight: 3,
+          fillColor: "#7C3AED",
+          fillOpacity: 1,
+        },
+      )
+        .bindPopup(createPopup("Você está aqui"))
+        .addTo(layer);
+    }
+
+    if (
+      selectedLocation &&
+      isValidCoordinates(selectedLocation)
+    ) {
+      L.marker(
+        [
+          selectedLocation.latitude,
+          selectedLocation.longitude,
+        ],
+        {
+          icon: createSelectedLocationIcon(L),
+          interactive: false,
+          keyboard: false,
+          zIndexOffset: 1000,
+        },
+      ).addTo(layer);
+    }
+
+    if (
+      destinationLocation &&
+      isValidCoordinates(destinationLocation)
+    ) {
+      const destination = document.createElement("div");
+
+      destination.style.cssText =
+        "width:32px;height:32px;box-sizing:border-box;" +
+        "background:#8055B5;border:3px solid white;" +
+        "border-radius:50% 50% 50% 0;transform:rotate(-45deg);" +
+        "display:flex;align-items:center;justify-content:center;" +
+        "box-shadow:0 4px 14px rgba(128,85,181,.55)";
+
+      const dot = document.createElement("div");
+      dot.style.cssText =
+        "width:10px;height:10px;background:white;border-radius:50%";
+
+      destination.appendChild(dot);
+
+      L.marker(
+        [
+          destinationLocation.latitude,
+          destinationLocation.longitude,
+        ],
+        {
+          icon: L.divIcon({
+            className: "",
+            html: destination,
+            iconSize: [34, 42],
+            iconAnchor: [17, 36],
+          }),
+          zIndexOffset: 1100,
+          keyboard: interactive,
+          interactive,
+          bubblingMouseEvents: false,
+        },
+      )
+        .bindPopup(createPopup("Destino da rota"))
+        .addTo(layer);
+    }
+
+    reports.forEach((report) => {
+      if (!isValidCoordinates(report.location)) return;
+
+      const marker = L.marker(
+        [
+          report.location.latitude,
+          report.location.longitude,
+        ],
+        {
+          icon: createReportMarkerIcon(L, report.category),
+          title: report.category,
+          keyboard: interactive,
+          interactive,
+          bubblingMouseEvents: false,
+          riseOnHover: true,
+        },
+      ).addTo(layer);
+
+      marker.on("click", () => {
+        const callback =
+          callbacksRef.current.onSelectReport;
+
+        if (callback) {
+          callback(report);
+        } else {
+          marker
+            .bindPopup(
+              createPopup(
+                report.category,
+                report.description ||
+                  "Sem descrição adicional.",
+              ),
+            )
+            .openPopup();
         }
       });
     });
 
-    return () => {
-      isMounted = false;
-    };
+    supportLocations.forEach((location) => {
+      const coordinates = {
+        latitude: location.latitude,
+        longitude: location.longitude,
+      };
+
+      if (!isValidCoordinates(coordinates)) return;
+
+      const marker = L.marker(
+        [location.latitude, location.longitude],
+        {
+          icon: createMarkerIcon(L, "#6D4DA8", "◆"),
+          title: location.name,
+          zIndexOffset: 500,
+          interactive,
+          keyboard: interactive,
+          bubblingMouseEvents: false,
+        },
+      ).addTo(layer);
+
+      marker.on("click", () => {
+        const callback =
+          callbacksRef.current.onSelectSupportLocation;
+
+        if (callback) {
+          callback(location);
+          return;
+        }
+
+        const distance =
+          typeof location.distance_meters === "number"
+            ? `Aproximadamente ${(
+                location.distance_meters / 1000
+              ).toFixed(1)} km`
+            : "Ponto de apoio";
+
+        marker
+          .bindPopup(createPopup(location.name, distance))
+          .openPopup();
+      });
+    });
   }, [
-    center,
-    zoom,
+    ready,
+    reports,
     userLocation,
     selectedLocation,
     destinationLocation,
+    supportLocations,
+    interactive,
+  ]);
+
+  useEffect(() => {
+    if (!ready || !routesRef.current) return;
+
+    const L = leafletRef.current;
+    const layer = routesRef.current;
+
+    layer.clearLayers();
+
+    const validRoutes = routes.filter(
+      (route) =>
+        route.coordinates.length >= 2 &&
+        route.coordinates.every(isValidCoordinates),
+    );
+
+    const active =
+      validRoutes.find(
+        (route) => route.id === selectedRouteId,
+      ) ??
+      validRoutes.find((route) => route.isSelected) ??
+      validRoutes[0];
+
+    if (!active) {
+      fittedRouteRef.current = null;
+      return;
+    }
+
+    const baseOptions = {
+      pane: "report-routes",
+      lineCap: "round",
+      lineJoin: "round",
+      interactive: false,
+    };
+
+    validRoutes
+      .filter((route) => route.id !== active.id)
+      .forEach((route) => {
+        L.polyline(
+          route.coordinates.map((point) => [
+            point.latitude,
+            point.longitude,
+          ]),
+          {
+            ...baseOptions,
+            color: isDark ? "#6D28D9" : "#C4B5FD",
+            weight: route.weight ?? 4,
+            opacity: route.opacity ?? 0.7,
+          },
+        ).addTo(layer);
+      });
+
+    const coordinates = active.coordinates.map(
+      (point) => [point.latitude, point.longitude],
+    );
+
+    L.polyline(coordinates, {
+      ...baseOptions,
+      color: isDark ? "#1E1630" : "#2E1065",
+      weight: (active.weight ?? 5) + 3,
+      opacity: 0.9,
+    }).addTo(layer);
+
+    const mainLine = L.polyline(coordinates, {
+      ...baseOptions,
+      color: isDark ? "#C4A5F3" : "#5B21B6",
+      weight: active.weight ?? 5,
+      opacity: active.opacity ?? 1,
+    }).addTo(layer);
+
+    const viewportKey = JSON.stringify([
+      active.id,
+      coordinates,
+    ]);
+
+    if (fittedRouteRef.current !== viewportKey) {
+      try {
+        mapRef.current.fitBounds(
+          mainLine.getBounds(),
+          {
+            paddingTopLeft: [70, 40],
+            paddingBottomRight: [40, 260],
+            maxZoom: 16,
+          },
+        );
+
+        fittedRouteRef.current = viewportKey;
+      } catch {
+        // O container pode estar mudando de tamanho.
+      }
+    }
+  }, [
+    ready,
     routes,
     selectedRouteId,
-    mapStyle,
-    supportLocations,
-    riskZones,
-    reports,
+    isDark,
   ]);
+
+  useEffect(() => {
+    if (!ready || !zonesRef.current) return;
+
+    const L = leafletRef.current;
+    const layer = zonesRef.current;
+
+    layer.clearLayers();
+
+    riskZones.forEach((zone) => {
+      const color =
+        zone.risk_level === "high"
+          ? "#DC2626"
+          : zone.risk_level === "medium"
+            ? "#EA580C"
+            : "#CA8A04";
+
+      const options = {
+        color,
+        fillColor: color,
+        fillOpacity: 0.22,
+        weight: 2,
+        interactive,
+      };
+
+      let shape: any;
+
+      if (zone.polygon_coordinates?.length) {
+        shape = L.polygon(
+          zone.polygon_coordinates.map(
+            (coordinate) => [
+              coordinate.latitude,
+              coordinate.longitude,
+            ],
+          ),
+          options,
+        );
+      } else if (zone.center) {
+        shape = L.circle(
+          [
+            zone.center.latitude,
+            zone.center.longitude,
+          ],
+          {
+            ...options,
+            radius: zone.radius_meters || 250,
+          },
+        );
+      }
+
+      if (shape) {
+        shape
+          .bindPopup(
+            createPopup(
+              zone.name,
+              `Área de atenção · ${zone.risk_level}`,
+            ),
+          )
+          .addTo(layer);
+      }
+    });
+  }, [ready, riskZones, interactive]);
 
   if (Platform.OS !== "web") {
     return (
-      <View style={styles.nativeFallbackContainer}>
-        <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={styles.fallbackText}>
-          Carregando visualização do mapa...
+      <View
+        style={[
+          s.fallback,
+          { backgroundColor: colors.screenBackground },
+        ]}
+      >
+        <Text
+          style={[
+            s.fallbackTitle,
+            { color: colors.text },
+          ]}
+        >
+          Mapa disponível na versão web
+        </Text>
+
+        <Text
+          style={[
+            s.fallbackText,
+            { color: colors.textMuted },
+          ]}
+        >
+          A implementação nativa do mapa pode ser conectada
+          aos mesmos dados e callbacks.
         </Text>
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
+    <View style={s.container}>
       <div
-        ref={mapContainerRef}
+        ref={containerRef}
         style={{
           width: "100%",
           height: "100%",
           position: "absolute",
-          top: 0,
-          left: 0,
+          inset: 0,
+          zIndex: 0,
         }}
       />
+
+      {!ready && !error && (
+        <View style={s.status}>
+          <ActivityIndicator color="#8055B5" />
+          <Text style={s.fallbackText}>
+            Carregando mapa…
+          </Text>
+        </View>
+      )}
+
+      {!!error && (
+        <View style={s.status}>
+          <Text style={s.fallbackText}>{error}</Text>
+
+          <Pressable
+            accessibilityRole="button"
+            onPress={() =>
+              setAttempt((value) => value + 1)
+            }
+            style={s.retry}
+          >
+            <Text style={s.retryText}>
+              Tentar novamente
+            </Text>
+          </Pressable>
+        </View>
+      )}
     </View>
   );
-};
+}
 
-const styles = StyleSheet.create({
+const s = StyleSheet.create({
   container: {
     flex: 1,
     width: "100%",
     height: "100%",
     position: "relative",
+    zIndex: 0,
   },
-  nativeFallbackContainer: {
+  fallback: {
     flex: 1,
-    justifyContent: "center",
+    padding: 24,
     alignItems: "center",
-    backgroundColor: "#F3F4F6",
+    justifyContent: "center",
+    backgroundColor: "#E9E4F2",
+    gap: 10,
+  },
+  fallbackTitle: {
+    color: "#4A3475",
+    fontSize: 17,
+    fontWeight: "700",
+    textAlign: "center",
   },
   fallbackText: {
-    marginTop: 12,
-    color: "#6B7280",
+    color: "#64748B",
     fontSize: 14,
+    lineHeight: 21,
+    textAlign: "center",
+  },
+  status: {
+    ...StyleSheet.absoluteFillObject,
+    padding: 24,
+    backgroundColor: "#F8FAFC",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+  },
+  retry: {
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    backgroundColor: "#8055B5",
+    borderRadius: 12,
+  },
+  retryText: {
+    color: "#FFFFFF",
+    fontWeight: "700",
   },
 });
-
