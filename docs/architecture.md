@@ -29,8 +29,8 @@ graph TD
         Services --> Models
     end
 
-    subgraph DadosEExternos ["Persistência Local e APIs Externas"]
-        DB[(PostgreSQL + PostGIS Local)]
+    subgraph DadosEExternos ["Persistência e APIs Externas"]
+        DB[(PostgreSQL + PostGIS / Supabase no desenvolvimento compartilhado)]
         OSM["Overpass API (OpenStreetMap)"]
         ORS["OpenRouteService (Rotas Seguras)"]
     end
@@ -96,6 +96,10 @@ O aplicativo móvel é construído em **React Native com Expo** utilizando **Exp
 
 ## 4. Persistência de Dados e Suporte Geoespacial
 
-- **PostgreSQL Local**: Executado localmente por cada integrante na porta `5432`.
-- **Extensão PostGIS**: Ativada no banco `protegela_db` para cálculos espaciais (`ST_DWithin`, `ST_Distance`).
-- **Migrações com Alembic**: Gerenciamento de alterações no schema de forma rastreável no Git.
+- **Desenvolvimento compartilhado**: O projeto Supabase `protegela-dev`, na região de São Paulo, fornece PostgreSQL 17.12 e PostGIS 3.3.7. O FastAPI conecta diretamente ao PostgreSQL com SQLAlchemy e `asyncpg`, sem SDK do Supabase.
+- **Autenticação e acesso**: A autenticação e os tokens JWT continuam no backend. Não utilizamos Supabase Auth; a Data API permanece desativada. O cliente mobile acessa somente a API FastAPI.
+- **Separação de privilégios**: O FastAPI utiliza a role restrita `protegela_app`. A conta administrativa `postgres` fica reservada aos responsáveis pelo banco e pelas migrações, sem ser fornecida aos processos da aplicação.
+- **Conexões seguras**: SSL Enforcement habilitado no Supabase e TLS com verificação do certificado CA e do hostname nos dois drivers. Todas as instâncias compartilham as mesmas chaves estáveis de Fernet, lookup e JWT, mantidas fora do Git.
+- **Suporte geoespacial**: PostGIS instalado em `extensions`, com `search_path = public, extensions` no ambiente compartilhado, para os tipos espaciais e cálculos como `ST_DWithin` e `ST_Distance`.
+- **PostgreSQL local e testes**: A instalação local continua disponível para desenvolvimento independente. Testes automatizados que alteram dados ou schemas utilizam exclusivamente o banco local isolado `protegela_test`, com PostGIS; nunca o Supabase compartilhado.
+- **Migrações com Alembic**: Alterações de schema são rastreadas no Git. No banco compartilhado, sua aplicação é coordenada pelos responsáveis, usando SQLAlchemy com `psycopg2` e credenciais administrativas separadas. A configuração dos dois ambientes está em [local_setup.md](local_setup.md).
