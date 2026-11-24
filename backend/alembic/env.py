@@ -14,11 +14,12 @@ from src.core.database import Base
 from src.modules.reports.models import Report  # noqa: F401 -- registra em Base.metadata
 
 from src.modules.users.models import User, EmergencyContact
-from src.modules.auth.models import LoginAttempt
+from src.modules.auth.models import LoginAttempt,PasswordResetToken
 from src.modules.comments.models import Comment  # noqa: F401
 from src.modules.safety_guides.models import SafetyGuide # noqa: F401
 
 from src.modules.risk_zones.models import SSPSafetyRecord  # noqa: F401
+from src.modules.history.models import HistoryEntry  # noqa: F401
 
 config = context.config
 
@@ -26,7 +27,8 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Configura a URL de conexão com base nas configurações da aplicação (sync URL para o Alembic)
-config.set_main_option("sqlalchemy.url", settings.DATABASE_SYNC_URL)
+# O ConfigParser exige %% para preservar os percentuais da URL codificada.
+config.set_main_option("sqlalchemy.url", settings.DATABASE_SYNC_URL.replace("%", "%%"))
 
 target_metadata = Base.metadata
 

@@ -1,11 +1,15 @@
+import logging
 import re
 import uuid
 from typing import List
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.database import get_db_session
-from src.modules.auth.service import login_with_rate_limit, register_user
+from src.modules.auth.email import send_password_reset_email
+from src.modules.auth.service import login_with_rate_limit, register_user, request_password_reset, reset_password
 from fastapi import APIRouter, Depends, Request, status
+
+logger = logging.getLogger(__name__)
 
 class LoginRequest(BaseModel):
     email: str = Field(min_length=1)
@@ -21,6 +25,21 @@ router = APIRouter(prefix="/auth", tags=["Auth"])
 
 _EMAIL_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _PHONE_REGEX = re.compile(r"^\+?\d{10,15}$")
+
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(max_length=254)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not _EMAIL_REGEX.match(value):
+            raise ValueError("E-mail inválido.")
+        return value
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=1)
+    new_password: str = Field(min_length=8, max_length=128)
 
 class EmergencyContactIn(BaseModel):
     name: str = Field(min_length=1, max_length=100)
@@ -96,3 +115,51 @@ async def login(
     )
 
     return LoginResponse(**tokens)
+
+@router.post(
+    "/forgot-password",
+    status_code=status.HTTP_200_OK,
+)
+async def forgot_password(
+    data: ForgotPasswordRequest,
+    session: AsyncSession = Depends(get_db_session),
+):
+    """Solicita a recuperação de senha."""
+
+    token = await request_password_reset(
+        session,
+        email=data.email,
+    )
+
+    if token is not None:
+        try:
+            await send_password_reset_email(recipient=data.email, token=token)
+        except (OSError, RuntimeError, ValueError):
+            logger.error("Falha no envio do e-mail de recuperação de senha.")
+
+    return {
+        "message": (
+            "Se o e-mail estiver cadastrado, você receberá "
+            "um link para redefinir sua senha."
+        )
+    }
+
+@router.post(
+    "/reset-password",
+    status_code=status.HTTP_200_OK,
+)
+async def reset_password_endpoint(
+    data: ResetPasswordRequest,
+    session: AsyncSession = Depends(get_db_session),
+):
+    """Redefine a senha utilizando um token de recuperação."""
+
+    await reset_password(
+        session,
+        token=data.token,
+        new_password=data.new_password,
+    )
+
+    return {
+        "message": "Senha redefinida com sucesso."
+    }

@@ -2,10 +2,7 @@ from fastapi import APIRouter, Depends, Query, status
 
 from src.core.config import settings
 from src.modules.support_locations.adapters import OverpassAdapter
-from src.modules.support_locations.clients import (
-    OpenRouteServiceDirectionsClient,
-    OverpassClient,
-)
+from src.modules.support_locations.clients import OverpassClient
 from src.modules.support_locations.schemas import NearbySupportLocationsResponse
 from src.modules.support_locations.service import SupportLocationService
 
@@ -17,11 +14,6 @@ def get_support_location_service() -> SupportLocationService:
         overpass_client=OverpassClient(
             api_url=settings.OVERPASS_API_URL,
             timeout_seconds=settings.OVERPASS_TIMEOUT_SECONDS,
-        ),
-        directions_client=OpenRouteServiceDirectionsClient(
-            api_url=settings.OPENROUTESERVICE_API_URL,
-            api_key=settings.OPENROUTESERVICE_API_KEY,
-            timeout_seconds=settings.OPENROUTESERVICE_TIMEOUT_SECONDS,
         ),
         overpass_adapter=OverpassAdapter(),
     )

@@ -13,7 +13,7 @@ const API_BASE_URL =
  */
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 8000, // Timeout padrão de 8s (docs/api_contracts.md)
+  timeout: 20000, // Timeout estendido para 20s para acomodar consultas geográficas externas (Overpass/OpenRouteService)
   headers: {
     "Content-Type": "application/json",
     Accept: "application/json",
