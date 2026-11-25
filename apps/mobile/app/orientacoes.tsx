@@ -13,35 +13,16 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { BottomNavigation } from '../src/components/ui/BottomNavigation';
 
+import { useSafetyGuides } from '@/features/shared/useScreenData';
+import { ApiFeedback } from '@/components/ui/ApiFeedback';
+
 type Props = {
   onClose: () => void;
 };
 
-const GUIDANCE = [
-  {
-    id: 'respect',
-    category: 'RESPEITO E LIMITES',
-    title: 'O que é assédio?',
-    description:
-      'São comportamentos indesejados que constrangem, intimidam ou desrespeitam seus limites, como comentários, insistência ou contato sem consentimento.',
-  },
-  {
-    id: 'theft',
-    category: 'PRÓXIMOS PASSOS',
-    title: 'Fui furtada. O que fazer?',
-    description:
-      'Registre um boletim de ocorrência. Em São Paulo, a Delegacia Eletrônica atende determinados casos online. Se levaram seus cartões, bloqueie-os e avise seu banco.',
-  },
-  {
-    id: 'safety',
-    category: 'SUA SEGURANÇA',
-    title: 'Alguém está me seguindo',
-    description:
-      'Entre em um local movimentado e peça ajuda à equipe. Se houver risco imediato, ligue 190.',
-  },
-];
-
 export default function GuidanceScreen({ onClose }: Props) {
+  const { guides, loading, error, refresh } = useSafetyGuides();
+
   async function openPhone() {
     try {
       await Linking.openURL('tel:190');
@@ -121,22 +102,29 @@ export default function GuidanceScreen({ onClose }: Props) {
               </Pressable>
             </View>
 
-            {GUIDANCE.map(item => (
-              <View key={item.id} style={styles.card}>
-                <View style={styles.categoryRow}>
-                  <View style={styles.categoryMark} />
-                  <Text style={styles.category}>{item.category}</Text>
+            <ApiFeedback
+              loading={loading}
+              error={error}
+              onRetry={refresh}
+            />
+
+            {!loading &&
+              !error &&
+              guides.map((guide) => (
+                <View key={guide.id} style={styles.card}>
+                  <Text
+                    accessibilityRole="header"
+                    style={styles.cardTitle}
+                  >
+                    {guide.title}
+                  </Text>
+
+                  <Text style={styles.description}>
+                    {guide.content}
+                  </Text>
                 </View>
-
-                <Text accessibilityRole="header" style={styles.cardTitle}>
-                  {item.title}
-                </Text>
-
-                <Text style={styles.description}>
-                  {item.description}
-                </Text>
-              </View>
-            ))}
+              ))
+            }
           </View>
         </View>
       </ScrollView>

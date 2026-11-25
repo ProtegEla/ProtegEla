@@ -11,45 +11,16 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { useUsefulNumbers } from "@/features/shared/useScreenData";
+import { ApiFeedback } from "@/components/ui/ApiFeedback";
+
 type Props = {
   onClose: () => void;
 };
 
-const PHONES = [
-  {
-    number: '180',
-    name: 'Central de Atendimento à Mulher',
-    description: 'Orientação e denúncias de violência contra a mulher.',
-    emergency: false,
-  },
-  {
-    number: '181',
-    name: 'Disque-Denúncia',
-    description:
-      'Denúncias anônimas de crimes. A disponibilidade varia conforme o estado.',
-    emergency: false,
-  },
-  {
-    number: '190',
-    name: 'Polícia Militar',
-    description: 'Emergências policiais e situações de risco imediato.',
-    emergency: true,
-  },
-  {
-    number: '192',
-    name: 'SAMU',
-    description: 'Atendimento em urgências e emergências médicas.',
-    emergency: true,
-  },
-  {
-    number: '188',
-    name: 'CVV',
-    description: 'Escuta e apoio emocional para prevenção do suicídio, 24 horas.',
-    emergency: false,
-  },
-];
-
 export default function UsefulPhonesScreen({ onClose }: Props) {
+  const { numbers, loading, error, refresh } = useUsefulNumbers();
+
   async function openDialer(number: string) {
     try {
       await Linking.openURL(`tel:${number}`);
@@ -91,37 +62,43 @@ export default function UsefulPhonesScreen({ onClose }: Props) {
               Toque em um cartão para abrir o discador.
             </Text>
 
-            {PHONES.map(phone => (
-              <Pressable
-                key={phone.number}
-                accessibilityRole="button"
-                accessibilityLabel={`Abrir discador para ligar ${phone.number}, ${phone.name}`}
-                onPress={() => openDialer(phone.number)}
-                style={({ pressed }) => [
-                  s.card,
-                  phone.emergency && s.emergencyCard,
-                  pressed && s.pressed,
-                ]}
-              >
-                <View style={s.row}>
-                  <Text style={s.cardTitle}>{phone.name}</Text>
-                  <View style={[s.numberBadge, phone.emergency && s.redBadge]}>
-                    <Text style={[s.number, phone.emergency && s.redText]}>
-                      {phone.number}
-                    </Text>
+            <ApiFeedback
+              loading={loading}
+              error={error}
+              onRetry={refresh}
+            />
+
+            {!loading &&
+              !error &&
+              numbers.map((phone) => (
+                <Pressable
+                  key={`${phone.phone}-${phone.name}`}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Ligar para ${phone.name}, ${phone.phone}`}
+                  onPress={() => openDialer(phone.phone)}
+                  style={({ pressed }) => [
+                    s.card,
+                    pressed && s.pressed,
+                  ]}
+                >
+                  <View style={s.row}>
+                    <Text style={s.cardTitle}>{phone.name}</Text>
+
+                    <View style={s.numberBadge}>
+                      <Text style={s.number}>{phone.phone}</Text>
+                    </View>
                   </View>
-                </View>
 
-                <Text style={s.description}>{phone.description}</Text>
-
-                <View style={s.footer}>
-                  <Text style={[s.category, phone.emergency && s.redText]}>
-                    {phone.emergency ? 'Emergência' : 'Orientação e apoio'}
+                  <Text style={s.description}>
+                    {phone.description}
                   </Text>
-                  <Text style={s.link}>Ligar ↗</Text>
-                </View>
-              </Pressable>
-            ))}
+
+                  <View style={s.footer}>
+                    <Text style={s.link}>Abrir discador ↗</Text>
+                  </View>
+                </Pressable>
+              ))
+            }
           </View>
         </View>
       </ScrollView>
