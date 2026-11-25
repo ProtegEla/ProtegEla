@@ -1,326 +1,396 @@
-import { router } from 'expo-router';
-import React from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+
 import {
+  ActivityIndicator,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+} from "react-native";
 
-export type PoliceStation = {
-  id: string;
-  name: string;
-  address: string;
-  distanceLabel?: string;
-  specialized?: boolean;
-};
+import { router, useFocusEffect } from "expo-router";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
 
-type Props = {
-  onClose: () => void;
-  stations?: PoliceStation[] | null;
-  addressLabel?: string;
-  onSelectAddress?: () => void;
-  onSelectStation?: (station: PoliceStation) => void;
-  mapContent?: React.ReactNode;
-};
+import { RiskMap } from "../src/features/map/components/RiskMap";
 
-// Dados fictícios apenas para visualizar a interface.
-const PLACEHOLDER_STATIONS: PoliceStation[] = [
-  {
-    id: 'placeholder-1',
-    name: 'Delegacia de Polícia',
-    address: 'Rua Exemplo, 123 · Centro',
-    distanceLabel: '4 km',
-  },
-  {
-    id: 'placeholder-2',
-    name: 'Delegacia da Mulher',
-    address: 'Avenida Exemplo, 456 · Vila Nova',
-    distanceLabel: '7 km',
-    specialized: true,
-  },
-  {
-    id: 'placeholder-3',
-    name: 'Delegacia de Polícia — Unidade Sul',
-    address: 'Praça Exemplo, 789 · Jardim Sul',
-    distanceLabel: '8 km',
-  },
-];
+import {
+  DEFAULT_SP_COORDINATES,
+  useCurrentLocation,
+} from "../src/features/map/hooks/useCurrentLocation";
 
-export default function PoliceStationsScreen({
-  onClose,
-  stations,
-  addressLabel = 'Selecione um endereço',
-  onSelectAddress,
-  onSelectStation,
-  mapContent,
-}: Props) {
-  // Garante que o valor usado em .length e .map seja um array.
-  // Um array vazio recebido continua vazio.
-  const stationList = Array.isArray(stations)
-    ? stations
-    : PLACEHOLDER_STATIONS;
+import type { Coordinates } from "../src/features/map/types";
+
+import { AddressSearchModal } from "../src/features/routes/components/AddressSearchModal";
+import { useSupportLocations } from "../src/features/shared/useScreenData";
+
+export default function DelegaciasScreen() {
+  const [focused, setFocused] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      setFocused(true);
+      return () => setFocused(false);
+    }, []),
+  );
+
+  const { location } = useCurrentLocation();
+
+  const [origin, setOrigin] = useState<Coordinates>(
+    DEFAULT_SP_COORDINATES,
+  );
+
+  const [center, setCenter] = useState<Coordinates>(
+    DEFAULT_SP_COORDINATES,
+  );
+
+  const [label, setLabel] = useState("Área inicial: São Paulo");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [cameraRevision, setCameraRevision] = useState(0);
+
+  const originChosen = useRef(false);
+
+  useEffect(() => {
+    if (!location || originChosen.current) return;
+
+    originChosen.current = true;
+
+    const point = {
+      latitude: location.latitude,
+      longitude: location.longitude,
+    };
+
+    setOrigin(point);
+    setCenter(point);
+    setLabel("Próximo à sua localização");
+  }, [location?.latitude, location?.longitude]);
+
+  const {
+    stations,
+    locations,
+    loading,
+    error,
+    refresh,
+  } = useSupportLocations(origin, {
+    enabled: focused,
+  });
+
+  function chooseOrigin(point: Coordinates, title: string) {
+    originChosen.current = true;
+
+    setOrigin(point);
+    setCenter(point);
+    setLabel(title);
+    setSelectedId(null);
+    setCameraRevision(value => value + 1);
+  }
+
+  function goBack() {
+    if (router.canGoBack()) router.back();
+    else router.replace("/");
+  }
 
   return (
-    <SafeAreaView style={s.screen}>
-      <ScrollView contentContainerStyle={s.scroll}>
+    <SafeAreaView
+      style={s.screen}
+      edges={["top", "left", "right"]}
+    >
+      <ScrollView contentContainerStyle={s.content}>
         <View style={s.header}>
-          <View style={s.navigation}>
-            <Text style={s.eyebrow}>REDE DE APOIO</Text>
+          <View style={s.heading}>
+            <Text style={s.title}>Delegacias e apoio</Text>
+            <Text style={s.subtitle}>
+              Encontre locais próximos à área escolhida.
+            </Text>
+          </View>
+
+          <Pressable
+            onPress={goBack}
+            accessibilityRole="button"
+            accessibilityLabel="Fechar"
+            style={s.close}
+          >
+            <Ionicons name="close" size={25} color="#FFFFFF" />
+          </Pressable>
+        </View>
+
+        <Pressable
+          style={s.search}
+          onPress={() => setSearchOpen(true)}
+          accessibilityRole="button"
+          accessibilityLabel="Alterar endereço da busca"
+        >
+          <Ionicons
+            name="search-outline"
+            size={19}
+            color="#8055B5"
+          />
+
+          <Text style={s.searchText} numberOfLines={2}>
+            {label}
+          </Text>
+
+          <Ionicons
+            name="chevron-down"
+            size={18}
+            color="#8055B5"
+          />
+        </Pressable>
+
+        {/* A altura explícita permite que o Leaflet ocupe a área. */}
+        <View style={s.map}>
+          {focused && (
+            <RiskMap
+              center={center}
+              cameraRevision={cameraRevision}
+              zoom={14}
+              mapStyle="streets"
+              userLocation={location}
+              selectedLocation={origin}
+              supportLocations={locations}
+              interactive
+              onMapPress={point =>
+                chooseOrigin(point, "Área selecionada no mapa")
+              }
+              onSelectSupportLocation={point => {
+                setSelectedId(point.id);
+
+                setCenter({
+                  latitude: point.latitude,
+                  longitude: point.longitude,
+                });
+
+                setCameraRevision(value => value + 1);
+              }}
+            />
+          )}
+        </View>
+
+        <Text style={s.hint}>
+          Toque no mapa ou busque um endereço para alterar a área
+          da consulta.
+        </Text>
+
+        <View style={s.listHeader}>
+          <Text style={s.listTitle}>Locais próximos</Text>
+
+          <Pressable
+            onPress={refresh}
+            disabled={loading}
+            accessibilityRole="button"
+            style={s.refresh}
+          >
+            <Text style={s.refreshText}>
+              {loading ? "Buscando…" : "Atualizar"}
+            </Text>
+          </Pressable>
+        </View>
+
+        {loading && (
+          <ActivityIndicator
+            color="#FFFFFF"
+            style={s.loader}
+          />
+        )}
+
+        {!!error && (
+          <View style={s.feedback} accessibilityRole="alert">
+            <Text style={s.feedbackText}>{error}</Text>
 
             <Pressable
+              onPress={refresh}
               accessibilityRole="button"
-              accessibilityLabel="Fechar delegacias"
-              onPress={() => router.dismissAll()}
-              style={({ pressed }) => [
-                s.close,
-                pressed && s.pressed,
-              ]}
+              style={s.retry}
             >
-              <Text style={s.closeText}>X</Text>
+              <Text style={s.retryText}>Tentar novamente</Text>
             </Pressable>
           </View>
+        )}
 
-          <Text accessibilityRole="header" style={s.title}>
-            Delegacias
+        {!loading && !error && stations.length === 0 && (
+          <Text style={s.hint}>
+            Nenhum local de apoio encontrado nesta área.
           </Text>
+        )}
 
-          <Text style={s.subtitle}>
-            Consulte as unidades e encontre um local de atendimento.
-          </Text>
-        </View>
+        {stations.map(station => (
+          <Pressable
+            key={station.id}
+            accessibilityRole="button"
+            accessibilityLabel={`Ver ${station.name} no mapa`}
+            style={[
+              s.card,
+              selectedId === station.id && s.selectedCard,
+            ]}
+            onPress={() => {
+              setSelectedId(station.id);
+              setCenter(station.location);
+              setCameraRevision(value => value + 1);
+            }}
+          >
+            <View style={s.cardTop}>
+              <Text style={s.cardTitle}>{station.name}</Text>
 
-        <View style={s.body}>
-          <View style={s.content}>
-            <View style={s.mapCard}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Selecionar endereço. ${addressLabel}`}
-                disabled={!onSelectAddress}
-                onPress={onSelectAddress}
-                style={({ pressed }) => [
-                  s.address,
-                  pressed && s.pressed,
-                ]}
-              >
-                <View style={s.addressContent}>
-                  <Text style={s.fieldLabel}>
-                    ENDEREÇO DE REFERÊNCIA
-                  </Text>
-                  <Text style={s.addressValue}>{addressLabel}</Text>
-                </View>
-
-                {onSelectAddress && (
-                  <Text style={s.arrow}>⌄</Text>
-                )}
-              </Pressable>
-
-              <View style={s.mapContainer}>
-                {mapContent ?? (
-                  <View style={s.placeholder}>
-                    <View style={s.pin}>
-                      <View style={s.pinCenter} />
-                    </View>
-
-                    <Text style={s.mapTitle}>Mapa da região</Text>
-                    <Text style={s.mapDescription}>
-                      Espaço reservado para o mapa.
-                    </Text>
-                  </View>
-                )}
-              </View>
-            </View>
-
-            <View style={s.sectionHeader}>
-              <Text accessibilityRole="header" style={s.sectionTitle}>
-                Unidades
+              <Text style={s.distance}>
+                {station.distanceLabel}
               </Text>
-
-              <View style={s.countBadge}>
-                <Text style={s.countText}>
-                  {stationList.length}
-                </Text>
-              </View>
             </View>
 
-            {stationList.map(station => {
-              const content = (
-                <>
-                  <View style={s.row}>
-                    <Text style={s.cardTitle}>{station.name}</Text>
-
-                    {station.distanceLabel && (
-                      <View style={s.distanceBadge}>
-                        <Text style={s.distanceText}>
-                          {station.distanceLabel}
-                        </Text>
-                      </View>
-                    )}
-                  </View>
-
-                  <Text style={s.description}>{station.address}</Text>
-
-                  {station.specialized && (
-                    <View style={s.specializedBadge}>
-                      <Text style={s.specializedText}>
-                        Atendimento à mulher
-                      </Text>
-                    </View>
-                  )}
-                </>
-              );
-
-              return onSelectStation ? (
-                <Pressable
-                  key={station.id}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Selecionar ${station.name}, ${station.address}`}
-                  onPress={() => onSelectStation(station)}
-                  style={({ pressed }) => [
-                    s.card,
-                    pressed && s.pressed,
-                  ]}
-                >
-                  {content}
-                </Pressable>
-              ) : (
-                <View key={station.id} style={s.card}>
-                  {content}
-                </View>
-              );
-            })}
-
-            {stationList.length === 0 && (
-              <View style={s.card}>
-                <Text style={s.emptyTitle}>
-                  Nenhuma unidade encontrada
-                </Text>
-                <Text style={s.description}>
-                  Tente selecionar outro endereço de referência.
-                </Text>
-              </View>
-            )}
-          </View>
-        </View>
+            <Text style={s.coordinates}>{station.address}</Text>
+          </Pressable>
+        ))}
       </ScrollView>
+
+      <AddressSearchModal
+        visible={searchOpen && focused}
+        initialQuery=""
+        onClose={() => setSearchOpen(false)}
+        onSelectAddress={address => {
+          chooseOrigin(
+            {
+              latitude: address.latitude,
+              longitude: address.longitude,
+            },
+            address.label,
+          );
+
+          setSearchOpen(false);
+        }}
+      />
     </SafeAreaView>
   );
 }
 
 const s = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#7450A5' },
-  scroll: { flexGrow: 1 },
-  header: {
-    width: '100%', maxWidth: 600, alignSelf: 'center',
-    paddingHorizontal: 24, paddingTop: 12, paddingBottom: 30,
-  },
-  navigation: {
-    flexDirection: 'row', alignItems: 'center',
-    justifyContent: 'space-between', marginBottom: 26, gap: 16,
-  },
-  eyebrow: {
-    flexShrink: 1, color: '#EDE4F7', fontSize: 11,
-    fontWeight: '700', letterSpacing: 1.5,
-  },
-  close: {
-    width: 48, height: 48, borderRadius: 24,
-    alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.12)',
-  },
-  closeText: { color: '#FFFFFF', fontSize: 30, lineHeight: 34 },
-  title: {
-    color: '#FFFFFF', fontSize: 32,
-    fontWeight: '700', letterSpacing: -0.7,
-  },
-  subtitle: {
-    marginTop: 10, color: '#EDE4F7',
-    fontSize: 16, lineHeight: 24, maxWidth: 360,
-  },
-  body: {
-    flexGrow: 1, padding: 20, paddingTop: 24, paddingBottom: 32,
-    borderTopLeftRadius: 30, borderTopRightRadius: 30,
-    backgroundColor: '#F7F5FB',
+  screen: {
+    flex: 1,
+    backgroundColor: "#8055B5",
   },
   content: {
-    width: '100%', maxWidth: 552, alignSelf: 'center', gap: 14,
+    width: "100%",
+    maxWidth: 640,
+    alignSelf: "center",
+    padding: 22,
+    paddingBottom: 32,
   },
-  mapCard: {
-    padding: 8, borderRadius: 24, borderWidth: 1,
-    borderColor: '#E9E2F0', backgroundColor: '#FFFFFF',
+  header: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    marginBottom: 22,
   },
-  address: {
-    minHeight: 68, flexDirection: 'row', alignItems: 'center',
-    gap: 12, paddingHorizontal: 14, paddingVertical: 12, marginBottom: 8,
+  heading: { flex: 1 },
+  title: {
+    color: "#FFFFFF",
+    fontSize: 27,
+    fontWeight: "700",
   },
-  addressContent: { flex: 1 },
-  fieldLabel: {
-    color: '#71687D', fontSize: 10, fontWeight: '700', letterSpacing: 1,
+  subtitle: {
+    color: "#F1EAF9",
+    marginTop: 7,
+    lineHeight: 20,
   },
-  addressValue: {
-    marginTop: 6, color: '#30243F',
-    fontSize: 15, lineHeight: 22, fontWeight: '600',
+  close: {
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  arrow: { color: '#7450A5', fontSize: 24 },
-  mapContainer: {
-    height: 260, overflow: 'hidden',
-    borderRadius: 18, backgroundColor: '#F0EBF7',
+  search: {
+    minHeight: 52,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    padding: 14,
+    backgroundColor: "#F8FAFC",
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
   },
-  placeholder: {
-    flex: 1, alignItems: 'center', justifyContent: 'center',
-    padding: 24, borderRadius: 18, borderWidth: 1,
-    borderStyle: 'dashed', borderColor: '#CDBCE2',
+  searchText: {
+    flex: 1,
+    color: "#4A3475",
+    fontSize: 14,
   },
-  pin: {
-    width: 34, height: 34, marginBottom: 22,
-    borderRadius: 17, borderBottomRightRadius: 4,
-    alignItems: 'center', justifyContent: 'center',
-    backgroundColor: '#7450A5', transform: [{ rotate: '45deg' }],
+  map: {
+    height: 300,
+    width: "100%",
+    flexShrink: 0,
+    overflow: "hidden",
+    borderBottomLeftRadius: 18,
+    borderBottomRightRadius: 18,
+    backgroundColor: "#E9E4F2",
   },
-  pinCenter: {
-    width: 12, height: 12, borderRadius: 6, backgroundColor: '#FFFFFF',
+  hint: {
+    color: "#F1EAF9",
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 10,
+    marginBottom: 16,
   },
-  mapTitle: {
-    color: '#503273', fontSize: 17, fontWeight: '700', textAlign: 'center',
+  listHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 8,
   },
-  mapDescription: {
-    marginTop: 8, color: '#71687D',
-    fontSize: 13, lineHeight: 20, textAlign: 'center',
+  listTitle: {
+    color: "#FFFFFF",
+    fontSize: 18,
+    fontWeight: "600",
   },
-  sectionHeader: {
-    flexDirection: 'row', alignItems: 'center',
-    gap: 10, marginTop: 12, paddingHorizontal: 4,
+  refresh: {
+    minHeight: 44,
+    justifyContent: "center",
+    paddingHorizontal: 10,
   },
-  sectionTitle: { color: '#30243F', fontSize: 19, fontWeight: '700' },
-  countBadge: {
-    paddingHorizontal: 10, paddingVertical: 4,
-    borderRadius: 999, backgroundColor: '#EEE7F6',
+  refreshText: {
+    color: "#FFFFFF",
+    fontWeight: "600",
   },
-  countText: { color: '#503273', fontSize: 12, fontWeight: '700' },
+  loader: { marginVertical: 14 },
+  feedback: {
+    backgroundColor: "#F8FAFC",
+    borderRadius: 16,
+    padding: 16,
+    marginVertical: 12,
+  },
+  feedbackText: {
+    color: "#7F1D1D",
+    lineHeight: 21,
+  },
+  retry: { alignSelf: "flex-start", paddingVertical: 12 },
+  retryText: { color: "#6E47A9", fontWeight: "700" },
   card: {
-    padding: 20, borderRadius: 22, borderWidth: 1,
-    borderColor: '#E9E2F0', backgroundColor: '#FFFFFF',
+    backgroundColor: "#F8FAFC",
+    borderRadius: 18,
+    padding: 16,
+    marginTop: 12,
+    borderWidth: 2,
+    borderColor: "transparent",
   },
-  row: { flexDirection: 'row', alignItems: 'flex-start', gap: 14 },
+  selectedCard: { borderColor: "#CBB5ED" },
+  cardTop: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+  },
   cardTitle: {
-    flex: 1, color: '#30243F', fontSize: 17,
-    lineHeight: 24, fontWeight: '700',
+    flex: 1,
+    color: "#1E293B",
+    fontSize: 15,
+    fontWeight: "600",
   },
-  description: {
-    marginTop: 10, color: '#71687D', fontSize: 14, lineHeight: 22,
+  distance: { color: "#6E47A9", fontWeight: "700" },
+  coordinates: {
+    color: "#64748B",
+    fontSize: 12,
+    marginTop: 8,
   },
-  distanceBadge: {
-    paddingHorizontal: 10, paddingVertical: 6,
-    borderRadius: 10, backgroundColor: '#F3EFF8',
-  },
-  distanceText: { color: '#503273', fontSize: 12, fontWeight: '700' },
-  specializedBadge: {
-    alignSelf: 'flex-start', marginTop: 14,
-    paddingHorizontal: 10, paddingVertical: 6,
-    borderRadius: 8, backgroundColor: '#EEE7F6',
-  },
-  specializedText: { color: '#503273', fontSize: 11, fontWeight: '600' },
-  emptyTitle: { color: '#30243F', fontSize: 17, fontWeight: '700' },
-  pressed: { opacity: 0.7 },
 });

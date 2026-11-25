@@ -11,7 +11,7 @@ export interface MapRegion extends Coordinates {
 export interface SupportLocation {
   id: string;
   name: string;
-  type: "police" | "hospital" | "shelter";
+  //type: "police" | "hospital" | "shelter";
   address?: string;
   phone?: string;
   latitude: number;

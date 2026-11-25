@@ -1,265 +1,309 @@
-import { router } from 'expo-router';
-import React, { useEffect, useRef } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+
 import {
+  ActivityIndicator,
+  Animated,
+  Easing,
+  Linking,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
-  View,
-  Animated,
-  Easing,
-  Platform,
   Vibration,
-  Linking,
-} from 'react-native';
+  View,
+} from "react-native";
 
-type Props = {
-  name?: string;
-  phone?: string;
-  onConfirm?: () => void;
-  onCancel?: () => void;
-};
+import { router, useFocusEffect } from "expo-router";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
 
-export default function CallingScreen({
-  name = 'Gabriela',
-  phone,
-  onConfirm,
-  onCancel,
-}: Props) {
-    const shakeX = useRef(new Animated.Value(0)).current;
+import { useAuth } from "../src/features/auth/AuthContext";
+import { useEmergencyTarget } from "../src/features/shared/useScreenData";
+
+export default function CallingScreen() {
+  const { isLoggedIn, user } = useAuth();
+  const [focused, setFocused] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      setFocused(true);
+      return () => setFocused(false);
+    }, []),
+  );
+
+  const sessionKey = isLoggedIn
+    ? `user:${user?.email ?? "authenticated"}`
+    : "guest";
+
+  const {
+    target,
+    loading,
+    error,
+    refresh,
+  } = useEmergencyTarget(sessionKey, {
+    enabled: focused,
+    isLoggedIn,
+  });
+
+  const [opening, setOpening] = useState(false);
+  const [callError, setCallError] = useState("");
+
+  const openingRef = useRef(false);
+  const activeRef = useRef(false);
+  const shakeX = useRef(new Animated.Value(0)).current;
     useEffect(() => {
-    const shake = Animated.loop(
-        Animated.sequence([
-        Animated.timing(shakeX, {
-            toValue: -4,
-            duration: 50,
-            easing: Easing.linear,
-            useNativeDriver: true,
-        }),
-        Animated.timing(shakeX, {
-            toValue: 4,
-            duration: 100,
-            easing: Easing.linear,
-            useNativeDriver: true,
-        }),
-        Animated.timing(shakeX, {
-            toValue: 0,
-            duration: 50,
-            easing: Easing.linear,
-            useNativeDriver: true,
-        }),
-        Animated.delay(1000),
-        ]),
-    );
+      const shake = Animated.loop(
+          Animated.sequence([
+          Animated.timing(shakeX, {
+              toValue: -4,
+              duration: 50,
+              easing: Easing.linear,
+              useNativeDriver: true,
+          }),
+          Animated.timing(shakeX, {
+              toValue: 4,
+              duration: 100,
+              easing: Easing.linear,
+              useNativeDriver: true,
+          }),
+          Animated.timing(shakeX, {
+              toValue: 0,
+              duration: 50,
+              easing: Easing.linear,
+              useNativeDriver: true,
+          }),
+          Animated.delay(1000),
+          ]),
+      );
 
-    shake.start();
+      shake.start();
 
-    // No Android, alterna espera e vibração.
-    // No iOS, os números representam intervalos entre vibrações.
-    Vibration.vibrate(
-        Platform.OS === 'android'
-        ? [0, 200, 1000]
-        : [0, 1200],
-        true,
-    );
+      Vibration.vibrate(
+          Platform.OS === 'android'
+          ? [0, 200, 1000]
+          : [0, 1200],
+          true,
+      );
 
-    return () => {
-        shake.stop();
-        shakeX.setValue(0);
-        Vibration.cancel();
-    };
+      return () => {
+          shake.stop();
+          shakeX.setValue(0);
+          Vibration.cancel();
+      };
     }, [shakeX]);
 
-    function handleConfirm() {
-        Vibration.cancel();
-        if (onConfirm) {
-            onConfirm();
-            return;
-        }
-
-        const targetPhone = phone || process.env.EXPO_PUBLIC_EMERGENCY_PHONE || "11941943128";
-        const url = `tel:${targetPhone}`;
-        if (Platform.OS === 'web') {
-            try {
-                window.location.href = url;
-            } catch {
-                Linking.openURL(url);
-            }
-        } else {
-            Linking.openURL(url);
-        }
+  async function confirm() {
+    if (!focused || loading || !target || openingRef.current) {
+      return;
     }
 
-    function handleCancel() {
-        Vibration.cancel();
-        if (onCancel) {
-            onCancel();
-        } else {
-            router.back();
-        }
+    const phone = target.phone.replace(/[\s().-]/g, "");
+
+    if (!/^\+?\d{3,15}$/.test(phone)) {
+      setCallError("O telefone retornado pelo servidor é inválido.");
+      return;
     }
+
+    openingRef.current = true;
+    setOpening(true);
+    setCallError("");
+
+    try {
+      await Linking.openURL(`tel:${phone}`);
+    } catch {
+      if (activeRef.current) {
+        setCallError(
+          "Não foi possível abrir o discador neste dispositivo.",
+        );
+      }
+    } finally {
+      openingRef.current = false;
+
+      if (activeRef.current) {
+        setOpening(false);
+      }
+    }
+  }
+
+  function cancel() {
+    if (router.canGoBack()) router.back();
+    else router.replace("/");
+  }
+
+  const disabled =
+    !focused || loading || !target || opening;
 
   return (
-    <Animated.View
+    <SafeAreaView style={s.screen}>
+      <Animated.View
         style={[
-            styles.screen,
-            { transform: [{ translateX: shakeX }] },
+          s.content,
+          { transform: [{ translateX: shakeX }] },
         ]}
-    >
-      <View style={styles.content}>
-        <View style={styles.message}>
-          <View style={styles.icon} accessible={false}>
-            <View style={[styles.ray, styles.rayLeft]} />
-            <View style={[styles.ray, styles.rayCenter]} />
-            <View style={[styles.ray, styles.rayRight]} />
-            <View style={styles.dome} />
-            <View style={styles.base} />
+      >
+        <View style={s.icon}>
+          <Ionicons
+            name="notifications-outline"
+            size={38}
+            color="#DC2626"
+          />
+        </View>
+
+        <Text style={s.overline}>Ligar para</Text>
+
+        {loading ? (
+          <ActivityIndicator
+            color="#DC2626"
+            style={s.loader}
+          />
+        ) : target ? (
+          <>
+            <Text style={s.name}>{target.label}</Text>
+            <Text style={s.phone}>{target.phone}</Text>
+          </>
+        ) : null}
+
+        {!!error && (
+          <View style={s.feedback} accessibilityRole="alert">
+            <Text style={s.feedbackText}>{error}</Text>
+
+            <Pressable
+              onPress={refresh}
+              accessibilityRole="button"
+              style={s.retry}
+            >
+              <Text style={s.retryText}>Tentar novamente</Text>
+            </Pressable>
           </View>
+        )}
 
-          <Text style={styles.subtitle}>Ligando para</Text>
-          <Text style={styles.name}>“{name}”</Text>
-        </View>
-
-        <View style={styles.actions}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Confirmar ligação para ${name}`}
-            onPress={handleConfirm}
-            style={({ pressed }) => [
-              styles.button,
-              styles.confirm,
-              pressed && styles.pressed,
-            ]}
+        {!!callError && (
+          <Text
+            accessibilityRole="alert"
+            style={s.feedbackText}
           >
-            <Text style={styles.confirmText}>Confirmar</Text>
-          </Pressable>
+            {callError}
+          </Text>
+        )}
 
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Cancelar ligação"
-            onPress={handleCancel}
-            style={({ pressed }) => [
-              styles.button,
-              styles.cancel,
-              pressed && styles.pressed,
-            ]}
-          >
-            <Text style={styles.cancelText}>Cancelar</Text>
-          </Pressable>
-        </View>
-      </View>
-    </Animated.View>
+        <Pressable
+          onPress={confirm}
+          disabled={disabled}
+          accessibilityRole="button"
+          accessibilityState={{ disabled }}
+          style={[s.confirm, disabled && s.disabled]}
+        >
+          <Text style={s.confirmText}>
+            {opening ? "Abrindo discador…" : "Confirmar"}
+          </Text>
+        </Pressable>
+
+        <Pressable
+          onPress={cancel}
+          accessibilityRole="button"
+          style={s.cancel}
+        >
+          <Text style={s.cancelText}>Cancelar</Text>
+        </Pressable>
+
+        <Text style={s.caption}>
+          Ao confirmar, o discador será aberto para realizar
+          a ligação.
+        </Text>
+      </Animated.View>
+    </SafeAreaView>
   );
 }
 
-const RED = '#EA2026';
-const BACKGROUND = '#F5E5E8';
-
-const styles = StyleSheet.create({
+const s = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: BACKGROUND,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 32,
-    paddingVertical: 32,
+    backgroundColor: "#F5E7EA",
+    justifyContent: "center",
+    alignItems: "center",
   },
   content: {
-    width: '100%',
-    maxWidth: 360,
-  },
-  message: {
-    alignItems: 'center',
-    marginBottom: 56,
+    width: "100%",
+    maxWidth: 440,
+    paddingHorizontal: 32,
+    paddingVertical: 28,
+    alignItems: "center",
   },
   icon: {
-    width: 40,
-    height: 38,
-    marginBottom: 20,
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    backgroundColor: "#FBE3E6",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 18,
   },
-  ray: {
-    position: 'absolute',
-    width: 2,
-    height: 5,
-    borderRadius: 1,
-    backgroundColor: RED,
-  },
-  rayLeft: {
-    top: 5,
-    left: 6,
-    transform: [{ rotate: '-45deg' }],
-  },
-  rayCenter: {
-    top: 0,
-    left: 19,
-  },
-  rayRight: {
-    top: 5,
-    right: 6,
-    transform: [{ rotate: '45deg' }],
-  },
-  dome: {
-    position: 'absolute',
-    top: 10,
-    left: 9,
-    width: 22,
-    height: 22,
-    borderWidth: 2,
-    borderColor: RED,
-    borderTopLeftRadius: 12,
-    borderTopRightRadius: 12,
-  },
-  base: {
-    position: 'absolute',
-    top: 28,
-    left: 4,
-    width: 32,
-    height: 10,
-    borderWidth: 2,
-    borderColor: RED,
-    borderRadius: 2,
-    backgroundColor: BACKGROUND,
-  },
-  subtitle: {
-    color: RED,
-    fontSize: 18,
-    fontWeight: '600',
-    textAlign: 'center',
+  overline: {
+    color: "#DC2626",
+    fontSize: 19,
+    fontWeight: "500",
   },
   name: {
-    marginTop: 4,
-    color: RED,
-    fontSize: 30,
-    fontWeight: '600',
-    textAlign: 'center',
+    color: "#DC2626",
+    fontSize: 28,
+    fontWeight: "700",
+    textAlign: "center",
+    marginTop: 8,
   },
-  actions: {
-    gap: 24,
+  phone: {
+    color: "#9F2538",
+    fontSize: 18,
+    marginTop: 8,
   },
-  button: {
-    minHeight: 56,
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    borderRadius: 999,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  loader: { marginVertical: 20 },
   confirm: {
-    backgroundColor: RED,
+    width: "100%",
+    minHeight: 56,
+    borderRadius: 28,
+    backgroundColor: "#DC2626",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 42,
+  },
+  disabled: { opacity: 0.5 },
+  confirmText: {
+    color: "#FFFFFF",
+    fontSize: 17,
+    fontWeight: "700",
   },
   cancel: {
-    backgroundColor: '#F7FAFB',
-  },
-  confirmText: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '600',
+    width: "100%",
+    minHeight: 56,
+    borderRadius: 28,
+    backgroundColor: "#F8FAFC",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 18,
   },
   cancelText: {
-    color: RED,
-    fontSize: 18,
-    fontWeight: '600',
+    color: "#DC2626",
+    fontSize: 17,
+    fontWeight: "600",
   },
-  pressed: {
-    opacity: 0.75,
+  caption: {
+    color: "#80545E",
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: "center",
+    marginTop: 20,
   },
+  feedback: { alignItems: "center", marginTop: 18 },
+  feedbackText: {
+    color: "#9F1239",
+    textAlign: "center",
+    lineHeight: 21,
+    marginTop: 12,
+  },
+  retry: { padding: 14 },
+  retryText: { color: "#9F1239", fontWeight: "700" },
 });

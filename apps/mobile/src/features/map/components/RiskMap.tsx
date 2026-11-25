@@ -351,14 +351,14 @@ export function RiskMap<
 
         if (typeof ResizeObserver !== "undefined") {
           observer = new ResizeObserver(() => {
-            if (active) ownedMap.invalidateSize();
+            if (active) ownedMap.invalidateSize({ pan: false });
           });
 
           observer.observe(containerRef.current);
         }
 
         requestAnimationFrame(() => {
-          if (active) ownedMap.invalidateSize();
+          if (active) ownedMap.invalidateSize({ pan: false });
         });
 
         setReady(true);

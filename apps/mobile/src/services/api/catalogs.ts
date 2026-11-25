@@ -80,14 +80,15 @@ export const supportLocationsService = {
     }
 
     const response =
-      await apiClient.get<
-        Schemas["NearbySupportLocationsResponse"]
-      >("/support-locations/nearby", {
-        ...options,
-        params: { latitude, longitude },
-      });
+      await apiClient.get<Schemas["NearbySupportLocationsResponse"]>(
+        "/support-locations/nearby",
+        {
+          params: { latitude, longitude },
+          signal: options.signal,
+          timeout: 12_000,
+        },
+      );
 
-    // radius_meters não é enviado: não existe nesse contrato.
     return response.data.data;
   },
 };

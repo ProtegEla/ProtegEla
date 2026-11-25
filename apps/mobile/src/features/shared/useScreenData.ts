@@ -4,10 +4,14 @@ import {
   emergencyService,
   safetyGuidesService,
   supportLocationsService,
+  type SupportLocationWithDistance,
 } from "../../services/api/catalogs";
 
 import { secureStore } from "../../storage/secureStore";
 import { useApiResource } from "./useApiResource";
+
+import { ApiError } from "../../services/api/client";
+//import type { Coordinates } from "../../services/api/reportAdapters";
 
 type Coordinates = {
   latitude: number;
@@ -57,13 +61,14 @@ export function useSafetyGuides() {
 }
 
 export function useSupportLocations(
-  coordinates: Coordinates | null,
+  coordinates: Readonly<Coordinates> | null,
+  { enabled = true }: { enabled?: boolean } = {},
 ) {
   const latitude = coordinates?.latitude;
   const longitude = coordinates?.longitude;
 
   const load = useCallback(
-    async (signal: AbortSignal) => {
+    async (signal: AbortSignal): Promise<SupportLocationWithDistance[]> => {
       if (latitude == null || longitude == null) return [];
 
       return supportLocationsService.getNearby(
@@ -74,25 +79,29 @@ export function useSupportLocations(
     [latitude, longitude],
   );
 
-  const resource = useApiResource(load);
+  const resource = useApiResource(load, {
+    enabled: enabled && latitude != null && longitude != null,
+    timeoutMs: 15_000,
+    preserveDataOnReload: true,
+  });
 
   const stations = useMemo(
     () =>
-      (resource.data ?? []).map((item) => ({
-        id: item.id,
-        name: item.name?.trim() || "Local de apoio",
+      (resource.data ?? []).map(location => ({
+        id: location.id,
+        name: location.name?.trim() || "Local de apoio",
         address:
-          `Coordenadas: ${item.latitude.toFixed(5)}, ` +
-          item.longitude.toFixed(5),
+          `Coordenadas: ${location.latitude.toFixed(5)}, ` +
+          location.longitude.toFixed(5),
         distanceLabel:
-          item.distance_m < 1000
-            ? `${Math.round(item.distance_m)} m`
-            : `${(item.distance_m / 1000)
+          location.distance_m < 1000
+            ? `${Math.round(location.distance_m)} m`
+            : `${(location.distance_m / 1000)
                 .toFixed(1)
                 .replace(".", ",")} km`,
         location: {
-          latitude: item.latitude,
-          longitude: item.longitude,
+          latitude: location.latitude,
+          longitude: location.longitude,
         },
       })),
     [resource.data],
@@ -100,12 +109,12 @@ export function useSupportLocations(
 
   const locations = useMemo(
     () =>
-      (resource.data ?? []).map((item) => ({
-        id: item.id,
-        name: item.name?.trim() || "Local de apoio",
-        latitude: item.latitude,
-        longitude: item.longitude,
-        distance_meters: item.distance_m,
+      (resource.data ?? []).map(location => ({
+        id: location.id,
+        name: location.name?.trim() || "Local de apoio",
+        latitude: location.latitude,
+        longitude: location.longitude,
+        distance_meters: location.distance_m,
       })),
     [resource.data],
   );
@@ -114,33 +123,53 @@ export function useSupportLocations(
     ...resource,
     stations,
     locations,
-    hasLocation: latitude != null && longitude != null,
   };
 }
 
 export function useEmergencyTarget(
-  authRevision: unknown = null,
+  sessionKey: unknown = null,
+  {
+    enabled = true,
+    isLoggedIn,
+  }: {
+    enabled?: boolean;
+    isLoggedIn?: boolean;
+  } = {},
 ) {
   const load = useCallback(
     async (signal: AbortSignal) => {
-      const token = await secureStore.getAccessToken();
-
-      // Contingência prevista para acesso sem login.
-      if (!token?.trim()) {
+      if (isLoggedIn === false) {
         return {
           phone: "190",
           label: "Polícia Militar",
+          source: "guest-fallback" as const,
         };
       }
 
-      const result =
-        await emergencyService.getCallTarget({ signal });
+      const token = await secureStore.getAccessToken();
 
-      const phone = result.phone.trim();
+      if (!token?.trim()) {
+        if (isLoggedIn === true) {
+          throw new ApiError(
+            "Faça login novamente para continuar.",
+            401,
+            "UNAUTHORIZED",
+          );
+        }
+
+        return {
+          phone: "190",
+          label: "Polícia Militar",
+          source: "guest-fallback" as const,
+        };
+      }
+
+      const response = await emergencyService.getCallTarget({ signal });
+      const phone = response.phone.trim();
 
       if (!phone) {
         throw new Error(
-          "O servidor não informou o telefone de emergência.",
+          "O servidor não informou um telefone para a ligação.",
         );
       }
 
@@ -150,12 +179,16 @@ export function useEmergencyTarget(
           phone === "190"
             ? "Polícia Militar"
             : "Contato de emergência",
+        source: "api" as const,
       };
     },
-    [authRevision],
+    [sessionKey, isLoggedIn],
   );
 
-  const resource = useApiResource(load);
+  const resource = useApiResource(load, {
+    enabled,
+    timeoutMs: 15_000,
+  });
 
   return {
     ...resource,
