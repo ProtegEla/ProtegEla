@@ -1,4 +1,11 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+} from "react";
+
 import {
   StyleSheet,
   Text,
@@ -9,55 +16,145 @@ import {
   Modal,
   ScrollView,
   Platform,
-  ActivityIndicator,
+  Alert,
 } from "react-native";
+
 import { useRouter } from "expo-router";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+
 import { theme, useAppTheme } from "../src/theme";
 import { BottomNavigation, ProfileMenuItem } from "../src/components/ui";
 import { useAuth } from "../src/features/auth/AuthContext";
-import { RiskMap, MapTileStyle } from "../src/features/map/components/RiskMap";
+
+import {
+  RiskMap,
+  type MapTileStyle,
+} from "../src/features/map/components/RiskMap";
+
 import {
   useCurrentLocation,
   DEFAULT_SP_COORDINATES,
 } from "../src/features/map/hooks/useCurrentLocation";
+
+import type {
+  SupportLocation,
+  Coordinates,
+} from "../src/features/map/types";
+
 import { supportLocationsService } from "../src/services/api/supportLocations";
-import { SupportLocation, RiskZoneFeature, Coordinates } from "../src/features/map/types";
-import { Report, ReportCategory } from "../src/types/report";
-import { CreateReportBottomSheet } from "../src/features/reports/components/CreateReportBottomSheet";
-import { addressService, AddressSuggestion } from "../src/services/api/addresses";
-import { routesService, RouteOption } from "../src/services/api/routes";
+
+import {
+  CreateReportBottomSheet,
+  type CreateReportData,
+} from "../src/features/reports/components/CreateReportBottomSheet";
+
+import type { AddressSuggestion } from "../src/services/api/addresses";
+
+import {
+  routesService,
+  type RouteOption,
+} from "../src/services/api/routes";
+
 import { AddressSearchModal } from "../src/features/routes/components/AddressSearchModal";
 import { RoutePlanningBar } from "../src/features/routes/components/RoutePlanningBar";
 import { RouteOptionsBottomSheet } from "../src/features/routes/components/RouteOptionsBottomSheet";
 
-/**
- * Tela Principal / Home do ProtegEla (RF03, RF05, RF10, RF12, RF14).
- * Ponto de entrada padrão do aplicativo (acesso sem login - RF03).
- * 100% Responsiva para celular e web.
- */
+import { useHomeReports } from "../src/features/reports/useHomeReports";
+import { DangerPointDetailsModal } from "../src/features/reports/components/DangerPointDetailsModal";
+
+import {
+  isValidCoordinates,
+  type DangerReport,
+} from "../src/features/reports/reportModel";
+
 export default function HomeScreen() {
   const router = useRouter();
+
   const { colors, isDark, toggleTheme } = useAppTheme();
-  const { isLoggedIn, user, logout, updateNickname, login } = useAuth();
+  const { isLoggedIn, user, logout, updateNickname } = useAuth();
 
   const nickname = user?.nickname || "Maria";
   const email = user?.email || "maria.lopez@gmail.com";
 
-  // Edição inline de apelido no painel lateral
   const [isEditingNickname, setIsEditingNickname] = useState(false);
   const [tempNickname, setTempNickname] = useState(nickname);
-
-  // Controle da gaveta/painel lateral
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
-  // Controle do Bottom Sheet de Adicionar Relato
-  const [isReportSheetOpen, setIsReportSheetOpen] = useState(false);
+  const { location, refreshLocation } = useCurrentLocation();
+  const currentCoords = location || DEFAULT_SP_COORDINATES;
+
+  const [mapCenter, setMapCenter] = useState<Coordinates>(currentCoords);
+  const [mapZoom, setMapZoom] = useState(16);
+  const [cameraRevision, setCameraRevision] = useState(0);
+
+  const [selectedAddressInfo, setSelectedAddressInfo] = useState<{
+    label: string;
+    coords: Coordinates;
+  } | null>(null);
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
+
+  const [isRouteMode, setIsRouteMode] = useState(false);
+  const [calculatedRoutes, setCalculatedRoutes] = useState<RouteOption[]>([]);
+  const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
+  const [isCalculatingRoutes, setIsCalculatingRoutes] = useState(false);
+  const [routeComparison, setRouteComparison] = useState<any>(null);
+  const [routeError, setRouteError] = useState("");
+
+  const [reportAddressSnapshot, setReportAddressSnapshot] = useState("");
+
+  const reportFlow = useHomeReports({
+    currentCoords,
+    hasUserLocation: Boolean(location),
+    authorName: user?.nickname || "Você",
+  });
+
+  const routeRequestRef = useRef(0);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+
+    return () => {
+      mountedRef.current = false;
+      routeRequestRef.current += 1;
+    };
+  }, []);
+
+  const mapRoutes = useMemo(
+    () =>
+      calculatedRoutes.map((route) => ({
+        id: route.id,
+        coordinates: route.coordinates,
+        color: route.tagBgColor,
+        isSelected: route.id === selectedRouteId,
+      })),
+    [calculatedRoutes, selectedRouteId],
+  );
+
+  useEffect(() => {
+    if (
+      location &&
+      !selectedAddressInfo &&
+      !isRouteMode &&
+      !reportFlow.creationSession
+    ) {
+      setMapCenter(location);
+    }
+  }, [
+    location?.latitude,
+    location?.longitude,
+    selectedAddressInfo,
+    isRouteMode,
+    Boolean(reportFlow.creationSession),
+  ]);
 
   const handleSaveInlineNickname = () => {
     if (tempNickname.trim().length >= 3) {
       updateNickname(tempNickname.trim());
     }
+
     setIsEditingNickname(false);
   };
 
@@ -66,188 +163,137 @@ export default function HomeScreen() {
     setIsDrawerOpen(false);
   };
 
-  // Localização atual da usuária (Web e Celular)
-  const { location, refreshLocation } = useCurrentLocation();
-  const currentCoords = location || DEFAULT_SP_COORDINATES;
-
-  // Centro e Zoom reativos do Mapa
-  const [mapCenter, setMapCenter] = useState<Coordinates>(currentCoords);
-  const [mapZoom, setMapZoom] = useState<number>(16);
-
-  // Endereço selecionado ou ponto de foco ativo (RF09)
-  const [selectedAddressInfo, setSelectedAddressInfo] = useState<{
-    label: string;
-    coords: Coordinates;
-  } | null>(null);
-
-  // Busca e Autocomplete de Endereços
-  const [searchQuery, setSearchQuery] = useState("");
-  const [suggestions, setSuggestions] = useState<AddressSuggestion[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-  const [showSuggestions, setShowSuggestions] = useState(false);
-
-  // Modal de Busca Expandida com Recentes (Imagem 1)
-  const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
-
-  // Modo Rota e Trajetos Seguros (Imagem 2)
-  const [isRouteMode, setIsRouteMode] = useState(false);
-  const [calculatedRoutes, setCalculatedRoutes] = useState<RouteOption[]>([]);
-  const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
-  const [isCalculatingRoutes, setIsCalculatingRoutes] = useState(false);
-  const [routeComparison, setRouteComparison] = useState<any>(null);
-
-  // Relatos em memória temporários criados pela usuária nesta sessão de testes
-  const [sessionReports, setSessionReports] = useState<Report[]>([]);
-
-  // Sincroniza centro inicial quando obtiver localização GPS real
-  useEffect(() => {
-    if (location && !selectedAddressInfo) {
-      setMapCenter(location);
-    }
-  }, [location, selectedAddressInfo]);
-
-  // Debounce na consulta de sugestões de endereços (350ms)
-  useEffect(() => {
-    if (searchQuery.trim().length < 3) {
-      setSuggestions([]);
-      setIsSearching(false);
-      return;
-    }
-
-    setIsSearching(true);
-    const timer = setTimeout(async () => {
-      try {
-        const results = await addressService.getSuggestions(searchQuery, 5);
-        setSuggestions(results);
-        setShowSuggestions(true);
-      } catch {
-        setSuggestions([]);
-      } finally {
-        setIsSearching(false);
-      }
-    }, 350);
-
-    return () => clearTimeout(timer);
-  }, [searchQuery]);
-
   const handleSelectSuggestion = (item: AddressSuggestion) => {
+    const coords: Coordinates = {
+      latitude: item.latitude,
+      longitude: item.longitude,
+    };
+
+    if (!isValidCoordinates(coords)) return;
+
+    routeRequestRef.current += 1;
+
     setSearchQuery(item.label);
-    const coords: Coordinates = { latitude: item.latitude, longitude: item.longitude };
-    setSelectedAddressInfo({ label: item.label, coords });
+    setIsCalculatingRoutes(false);
+    setCalculatedRoutes([]);
+    setSelectedRouteId(null);
+    setRouteComparison(null);
+    setRouteError("");
+    setIsRouteMode(false);
+    setIsSearchModalOpen(false);
+
+    reportFlow.selectLocation(coords);
+
+    setSelectedAddressInfo({
+      label: item.label,
+      coords,
+    });
+
     setMapCenter(coords);
     setMapZoom(17);
-    setShowSuggestions(false);
+    setCameraRevision((value) => value + 1);
   };
 
   const handleClearSearch = () => {
+    routeRequestRef.current += 1;
+
+    setIsCalculatingRoutes(false);
+    setRouteComparison(null);
+    setRouteError("");
     setSearchQuery("");
-    setSuggestions([]);
-    setShowSuggestions(false);
     setSelectedAddressInfo(null);
     setIsRouteMode(false);
     setCalculatedRoutes([]);
     setSelectedRouteId(null);
-    setMapCenter(location || DEFAULT_SP_COORDINATES);
-    setMapZoom(16);
-  };
 
-  const handleSelectSearchedAddress = (item: AddressSuggestion) => {
-    handleSelectSuggestion(item);
+    reportFlow.selectLocation(currentCoords);
+
+    setMapCenter(currentCoords);
+    setMapZoom(16);
+    setCameraRevision((value) => value + 1);
   };
 
   const handleTriggerRouteCalculation = async (
     destCoords: Coordinates,
-    destLabel: string
+    destLabel: string,
   ) => {
+    if (!isValidCoordinates(destCoords)) return;
+
+    const requestId = ++routeRequestRef.current;
+
+    setSelectedAddressInfo({
+      label: destLabel,
+      coords: { ...destCoords },
+    });
+
     setIsRouteMode(true);
     setIsCalculatingRoutes(true);
     setCalculatedRoutes([]);
     setSelectedRouteId(null);
+    setRouteComparison(null);
+    setRouteError("");
+
+    // O centro padrão não representa a localização da usuária.
+    if (!location || !isValidCoordinates(location)) {
+      setIsCalculatingRoutes(false);
+      setRouteError(
+        "Ative sua localização para calcular a rota a partir do GPS.",
+      );
+      return;
+    }
+
+    const origin = { ...location };
 
     try {
       const result = await routesService.calculateRoutes({
-        origin: currentCoords,
+        origin,
         destination: destCoords,
       });
 
-      setCalculatedRoutes(result.routes);
+      if (
+        !mountedRef.current ||
+        requestId !== routeRequestRef.current
+      ) {
+        return;
+      }
+
+      const routes = Array.isArray(result.routes)
+        ? result.routes
+        : [];
+
+      setCalculatedRoutes(routes);
       setRouteComparison(result.comparison);
-      if (result.routes.length > 0) {
-        setSelectedRouteId(result.routes[0].id);
+      setSelectedRouteId(routes[0]?.id ?? null);
+
+      if (!routes.length) {
+        setRouteError(
+          "Nenhuma rota encontrada para este destino.",
+        );
       }
     } catch {
-      // Fallback gracioso com estimativa direta
-      const distM = haversineDistanceM(
-        currentCoords.latitude,
-        currentCoords.longitude,
-        destCoords.latitude,
-        destCoords.longitude
-      );
-      const durMin = Math.max(3, Math.round(distM / 75));
-      const fallbackRoutes: RouteOption[] = [
-        {
-          id: "route-recommended",
-          typeTag: "recommended",
-          label: "Recomendada",
-          tagBgColor: "#00695C",
-          durationMinutes: durMin,
-          durationLabel: `${durMin} min`,
-          distanceKm: Number((distM / 1000).toFixed(1)),
-          distanceLabel: `${(distM / 1000).toFixed(1).replace(".", ",")} km`,
-          riskLevel: "baixo",
-          riskBadgeLabel: "Risco baixo",
-          riskBadgeColor: "#00796B",
-          coordinates: [
-            { latitude: currentCoords.latitude, longitude: currentCoords.longitude },
-            { latitude: destCoords.latitude, longitude: destCoords.longitude },
-          ],
-          exposureScore: 5,
-        },
-        {
-          id: "route-fastest",
-          typeTag: "fastest",
-          label: "Mais rápida",
-          tagBgColor: "#00838F",
-          durationMinutes: Math.max(2, durMin - 2),
-          durationLabel: `${Math.max(2, durMin - 2)} min`,
-          distanceKm: Number((distM / 1000).toFixed(1)),
-          distanceLabel: `${(distM / 1000).toFixed(1).replace(".", ",")} km`,
-          riskLevel: "médio",
-          riskBadgeLabel: "Risco médio",
-          riskBadgeColor: "#E65100",
-          coordinates: [
-            { latitude: currentCoords.latitude, longitude: currentCoords.longitude },
-            { latitude: destCoords.latitude, longitude: destCoords.longitude },
-          ],
-          exposureScore: 18,
-        },
-        {
-          id: "route-safest",
-          typeTag: "safest",
-          label: "Mais segura",
-          tagBgColor: "#6A1B9A",
-          durationMinutes: durMin + 2,
-          durationLabel: `${durMin + 2} min`,
-          distanceKm: Number(((distM + 200) / 1000).toFixed(1)),
-          distanceLabel: `${((distM + 200) / 1000).toFixed(1).replace(".", ",")} km`,
-          riskLevel: "baixo",
-          riskBadgeLabel: "Risco baixo",
-          riskBadgeColor: "#00796B",
-          coordinates: [
-            { latitude: currentCoords.latitude, longitude: currentCoords.longitude },
-            { latitude: destCoords.latitude, longitude: destCoords.longitude },
-          ],
-          exposureScore: 2,
-        },
-      ];
-      setCalculatedRoutes(fallbackRoutes);
-      setSelectedRouteId(fallbackRoutes[0].id);
+      if (
+        mountedRef.current &&
+        requestId === routeRequestRef.current
+      ) {
+        setRouteError(
+          "Não foi possível calcular as rotas. Tente novamente.",
+        );
+      }
     } finally {
-      setIsCalculatingRoutes(false);
+      if (
+        mountedRef.current &&
+        requestId === routeRequestRef.current
+      ) {
+        setIsCalculatingRoutes(false);
+      }
     }
   };
 
   const handleExitRouteMode = () => {
+    routeRequestRef.current += 1;
+
+    setIsCalculatingRoutes(false);
+    setRouteError("");
     setIsRouteMode(false);
     setCalculatedRoutes([]);
     setSelectedRouteId(null);
@@ -255,133 +301,203 @@ export default function HomeScreen() {
   };
 
   const handleStartNavigation = () => {
+    const route = calculatedRoutes.find(
+      (item) => item.id === selectedRouteId,
+    );
+
+    if (!route) {
+      const message = "Selecione uma rota calculada primeiro.";
+
+      if (Platform.OS === "web") {
+        window.alert(message);
+      } else {
+        Alert.alert("Rotas", message);
+      }
+
+      return;
+    }
+
+    // Os trechos enviados ainda não têm um serviço de navegação ativa.
+    const message =
+      `Rota selecionada: ${route.label}. ` +
+      "O acompanhamento em tempo real ainda não está integrado nesta tela.";
+
     if (Platform.OS === "web") {
-      alert("Iniciando acompanhamento da rota com monitoramento ativo!");
+      window.alert(message);
+    } else {
+      Alert.alert("Rota selecionada", message);
     }
   };
 
   const handleRecentralizeGps = () => {
-    refreshLocation();
+    void refreshLocation();
+
+    routeRequestRef.current += 1;
+
+    setIsRouteMode(false);
+    setIsCalculatingRoutes(false);
+    setCalculatedRoutes([]);
+    setSelectedRouteId(null);
+    setRouteComparison(null);
+    setRouteError("");
     setSelectedAddressInfo(null);
     setSearchQuery("");
-    setShowSuggestions(false);
-    setMapCenter(location || DEFAULT_SP_COORDINATES);
+
+    reportFlow.selectLocation(currentCoords);
+    reportFlow.recenterMap();
+
+    setMapCenter(currentCoords);
     setMapZoom(16);
+    setCameraRevision((value) => value + 1);
   };
 
   const handleMapClick = (coords: Coordinates) => {
-    // Em modo rota, não permitir novo pino — a rota já está sendo calculada
-    if (isRouteMode) return;
-    const label = `Ponto no mapa (${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)})`;
+    if (isRouteMode || !isValidCoordinates(coords)) return;
+
+    reportFlow.selectLocation(coords);
+
+    const label =
+      `Ponto no mapa (${coords.latitude.toFixed(4)}, ` +
+      `${coords.longitude.toFixed(4)})`;
+
     setSelectedAddressInfo({ label, coords });
     setMapCenter(coords);
     setSearchQuery(label);
-    setShowSuggestions(false);
   };
 
-  const handleCreateReport = (data: any) => {
-    const reportCoords = data.location?.latitude
-      ? { latitude: data.location.latitude, longitude: data.location.longitude }
-      : (selectedAddressInfo?.coords || currentCoords);
+  const handleOpenReport = () => {
+    setReportAddressSnapshot(
+      selectedAddressInfo?.label ||
+        (location
+          ? "Minha localização atual (GPS)"
+          : "Centro inicial do mapa"),
+    );
 
-    const newReport: Report = {
-      id: `temp-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      category: data.category as any,
-      description: data.description
-        ? `${data.description}${data.addressDetail ? ` (${data.addressDetail})` : ""}`
-        : data.addressDetail || "",
-      location: {
-        latitude: reportCoords.latitude,
-        longitude: reportCoords.longitude,
-        address_reference: data.location?.address || selectedAddressInfo?.label || "",
-      },
-      incident_date: new Date().toISOString().split("T")[0],
-      incident_period: data.period as any,
-      is_anonymous: Boolean(data.isAnonymous),
-      confirmations_count: 1,
-      abuse_reports_count: 0,
-      is_hidden: false,
-      created_at: new Date().toISOString(),
-      author_username: data.isAnonymous ? undefined : (user?.nickname || "Você"),
+    reportFlow.openCreateReport();
+  };
+
+  const handleCreateReport = async (data: CreateReportData) => {
+    if (!isValidCoordinates(data.location)) {
+      throw new Error("Selecione uma localização válida.");
+    }
+
+    await reportFlow.createReport({
+      ...data,
+      address: data.address || data.location.address,
+    });
+
+    const coords: Coordinates = {
+      latitude: data.location.latitude,
+      longitude: data.location.longitude,
     };
 
-    setSessionReports((prev) => [newReport, ...prev]);
-    // Recentraliza no local onde o relato foi criado para visualização imediata
-    setMapCenter(reportCoords);
+    const label = data.address || data.location.address;
+
+    setSelectedAddressInfo({ label, coords });
+    setSearchQuery(label);
+    setMapCenter(coords);
     setMapZoom(17);
+    setCameraRevision((value) => value + 1);
   };
 
-  // Estilo do mapa reativo ao tema da aplicação (claro vs escuro)
-  const mapStyle: MapTileStyle = isDark ? "clean_dark" : "clean";
+  const mapStyle: MapTileStyle = isDark
+    ? "clean_dark"
+    : "clean";
 
-  // Estado para delegacias e pontos de apoio vindos da API
-  const [supportLocations, setSupportLocations] = useState<SupportLocation[]>([]);
+  const [supportLocations, setSupportLocations] =
+    useState<SupportLocation[]>([]);
 
-  // Refs para controle de debounce/throttle do fetch de delegacias.
-  // Só re-consulta se a usuária se deslocar mais de 500m da última posição consultada.
-  const lastFetchedCoordsRef = useRef<{ latitude: number; longitude: number } | null>(null);
-  const isFetchingRef = useRef(false);
+  const lastFetchedCoordsRef = useRef<Coordinates | null>(null);
+  const supportCacheRef = useRef<SupportLocation[]>([]);
 
-  /**
-   * Distância euclidiana em metros entre duas coordenadas (Haversine simplificado).
-   */
   const haversineDistanceM = useCallback(
-    (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    (
+      lat1: number,
+      lon1: number,
+      lat2: number,
+      lon2: number,
+    ): number => {
       const R = 6_371_000;
       const dLat = ((lat2 - lat1) * Math.PI) / 180;
       const dLon = ((lon2 - lon1) * Math.PI) / 180;
+
       const a =
         Math.sin(dLat / 2) ** 2 +
         Math.cos((lat1 * Math.PI) / 180) *
-        Math.cos((lat2 * Math.PI) / 180) *
-        Math.sin(dLon / 2) ** 2;
+          Math.cos((lat2 * Math.PI) / 180) *
+          Math.sin(dLon / 2) ** 2;
+
       return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     },
-    []
+    [],
   );
 
-  // Carregar delegacias próximas — só re-consulta quando a usuária se deslocar > 500m
   useEffect(() => {
-    if (!currentCoords) return;
-    if (isFetchingRef.current) return;
+    let active = true;
 
-    // Verifica se já consultou nessa região (threshold de 500m)
-    if (lastFetchedCoordsRef.current) {
-      const dist = haversineDistanceM(
-        lastFetchedCoordsRef.current.latitude,
-        lastFetchedCoordsRef.current.longitude,
-        currentCoords.latitude,
-        currentCoords.longitude
-      );
-      if (dist < 500) return; // Não re-consulta se deslocamento < 500m
-    }
-
-    isFetchingRef.current = true;
-    lastFetchedCoordsRef.current = {
+    const coordinates: Coordinates = {
       latitude: currentCoords.latitude,
       longitude: currentCoords.longitude,
     };
 
-    supportLocationsService
-      .getNearby({
-        latitude: currentCoords.latitude,
-        longitude: currentCoords.longitude,
-        radius_meters: 5000,
-      })
-      .then((data) => {
-        if (data && data.length > 0) {
-          setSupportLocations(data);
-        }
-      })
-      .finally(() => {
-        isFetchingRef.current = false;
-      });
-  }, [currentCoords.latitude, currentCoords.longitude, haversineDistanceM]);
+    const previous = lastFetchedCoordsRef.current;
+
+    if (
+      previous &&
+      haversineDistanceM(
+        previous.latitude,
+        previous.longitude,
+        coordinates.latitude,
+        coordinates.longitude,
+      ) < 500
+    ) {
+      setSupportLocations(supportCacheRef.current);
+      return;
+    }
+
+    setSupportLocations([]);
+
+    const timer = setTimeout(() => {
+      supportLocationsService
+        .getNearby({
+          ...coordinates,
+          radius_meters: 5000,
+        })
+        .then((data) => {
+          if (!active) return;
+
+          lastFetchedCoordsRef.current = coordinates;
+          supportCacheRef.current = Array.isArray(data) ? data : [];
+          setSupportLocations(supportCacheRef.current);
+        })
+        .catch((error) => {
+          if (active) {
+            console.warn(
+              "Não foi possível carregar os locais de apoio.",
+              error,
+            );
+          }
+        });
+    }, 250);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [
+    currentCoords.latitude,
+    currentCoords.longitude,
+    haversineDistanceM,
+  ]);
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.screenBackground }]}>
+    <SafeAreaView
+      style={[
+        styles.safeArea,
+        { backgroundColor: colors.screenBackground },
+      ]}
+    >
       <View style={styles.mainContainer}>
-        {/* ================= ÁREA DO MAPA INTERATIVO ================= */}
         <View
           style={[
             styles.mapArea,
@@ -391,33 +507,40 @@ export default function HomeScreen() {
             },
           ]}
         >
-          <RiskMap
+          <RiskMap<DangerReport>
             center={mapCenter}
             zoom={mapZoom}
+            cameraRevision={cameraRevision}
             userLocation={location}
-            selectedLocation={selectedAddressInfo?.coords}
-            destinationLocation={
-              isRouteMode && selectedAddressInfo ? selectedAddressInfo.coords : null
+            selectedLocation={
+              selectedAddressInfo?.coords ??
+              reportFlow.selectedLocation
             }
-            routes={calculatedRoutes.map((r) => ({
-              id: r.id,
-              coordinates: r.coordinates,
-              color: r.tagBgColor,
-              isSelected: r.id === selectedRouteId,
-            }))}
+            destinationLocation={
+              isRouteMode
+                ? selectedAddressInfo?.coords
+                : null
+            }
+            routes={mapRoutes}
             selectedRouteId={selectedRouteId}
             mapStyle={mapStyle}
             supportLocations={supportLocations}
-            reports={sessionReports}
-            onMapClick={handleMapClick}
+            reports={reportFlow.reports}
+            onMapPress={handleMapClick}
+            onSelectReport={reportFlow.selectReport}
           />
         </View>
 
-        {/* ================= BARRA SUPERIOR OU MODO ROTA (IMAGEM 2) ================= */}
         {isRouteMode ? (
           <RoutePlanningBar
-            originLabel="Localização Atual"
-            destinationLabel={selectedAddressInfo?.label.split(",")[0] || "Destino"}
+            originLabel={
+              location
+                ? "Localização atual (GPS)"
+                : "Localização indisponível"
+            }
+            destinationLabel={
+              selectedAddressInfo?.label.split(",")[0] || "Destino"
+            }
             onClose={handleExitRouteMode}
             onEditDestination={() => setIsSearchModalOpen(true)}
             onStartRoute={handleStartNavigation}
@@ -443,42 +566,55 @@ export default function HomeScreen() {
                   color={colors.primaryPurple}
                   style={styles.searchIcon}
                 />
+
                 <TextInput
                   placeholder="Buscar um endereço"
                   placeholderTextColor={colors.textMuted}
-                  style={[styles.searchInput, { color: colors.text }]}
+                  style={[
+                    styles.searchInput,
+                    { color: colors.text },
+                  ]}
                   value={searchQuery}
                   editable={false}
                   pointerEvents="none"
                 />
-                {searchQuery.length > 0 ? (
+
+                {!!searchQuery.length && (
                   <TouchableOpacity
                     onPress={handleClearSearch}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    hitSlop={8}
                     accessibilityLabel="Limpar busca"
                     style={{ marginRight: 4 }}
                   >
-                    <Ionicons name="close-circle" size={18} color={colors.textMuted} />
+                    <Ionicons
+                      name="close-circle"
+                      size={18}
+                      color={colors.textMuted}
+                    />
                   </TouchableOpacity>
-                ) : null}
+                )}
               </View>
             </TouchableOpacity>
 
             {isLoggedIn ? (
-              /* Botão de 3 barrinhas (quando logada) */
               <TouchableOpacity
                 style={[
                   styles.iconButton,
-                  { backgroundColor: isDark ? "#241B38" : "#EDE9F5" },
+                  {
+                    backgroundColor: isDark ? "#241B38" : "#EDE9F5",
+                  },
                 ]}
                 onPress={() => setIsDrawerOpen(true)}
                 activeOpacity={0.7}
                 accessibilityLabel="Abrir menu de perfil"
               >
-                <Ionicons name="menu" size={24} color={colors.primaryPurple} />
+                <Ionicons
+                  name="menu"
+                  size={24}
+                  color={colors.primaryPurple}
+                />
               </TouchableOpacity>
             ) : (
-              /* Botão direto "Entrar" (quando deslogada - RF03) */
               <TouchableOpacity
                 style={[
                   styles.loginButtonTop,
@@ -494,14 +630,65 @@ export default function HomeScreen() {
           </View>
         )}
 
-        {/* ================= BOTÕES FLUTUANTES (FABS À DIREITA) ================= */}
+        {!isRouteMode &&
+          !selectedAddressInfo &&
+          !reportFlow.creationSession && (
+            <View
+              style={[
+                styles.reportHint,
+                {
+                  backgroundColor: colors.surface,
+                  borderColor: colors.border,
+                },
+              ]}
+            >
+              <View style={styles.reportHintRow}>
+                <Ionicons
+                  name="location-outline"
+                  size={19}
+                  color={colors.primaryPurple}
+                />
+                <Text
+                  accessibilityLiveRegion="polite"
+                  style={[
+                    styles.reportHintText,
+                    { color: colors.text },
+                  ]}
+                >
+                  {reportFlow.notice}
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                accessibilityRole="button"
+                onPress={reportFlow.loadExamples}
+                style={styles.reportTestButton}
+              >
+                <Text
+                  style={[
+                    styles.reportTestText,
+                    { color: colors.primaryPurple },
+                  ]}
+                >
+                  Carregar relatos fictícios de teste
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
         {!isRouteMode && (
-          <View style={styles.fabsContainer}>
-            {/* Botão Recentralizar (Alvo / Mira GPS) */}
+          <View
+            style={[
+              styles.fabsContainer,
+              selectedAddressInfo && { bottom: 104 },
+            ]}
+          >
             <TouchableOpacity
               style={[
                 styles.fabSmall,
-                { backgroundColor: isDark ? "#241B38" : "#EDE9F5" },
+                {
+                  backgroundColor: isDark ? "#241B38" : "#EDE9F5",
+                },
               ]}
               activeOpacity={0.8}
               onPress={handleRecentralizeGps}
@@ -514,13 +701,13 @@ export default function HomeScreen() {
               />
             </TouchableOpacity>
 
-            {/* Botão Adicionar Relato (Roxo + Triângulo) */}
             <TouchableOpacity
-              style={[styles.fabPrimary, { backgroundColor: colors.primaryPurple }]}
+              style={[
+                styles.fabPrimary,
+                { backgroundColor: colors.primaryPurple },
+              ]}
               activeOpacity={0.85}
-              onPress={() => {
-                setIsReportSheetOpen(true);
-              }}
+              onPress={handleOpenReport}
               accessibilityLabel="Adicionar relato de risco"
             >
               <Ionicons name="warning" size={22} color="#FFFFFF" />
@@ -529,243 +716,342 @@ export default function HomeScreen() {
           </View>
         )}
 
-      {/* ================= PAINEL LATERAL / DRAWER DO PERFIL ================= */}
-      <Modal
-        visible={isDrawerOpen}
-        animationType="fade"
-        transparent
-        onRequestClose={() => {
-          setIsEditingNickname(false);
-          setIsDrawerOpen(false);
-        }}
-      >
-        <View style={styles.drawerOverlay}>
-          {/* Backdrop clicável fora da sidebar (área do mapa) */}
-          <TouchableOpacity
-            style={styles.backdropPressable}
-            activeOpacity={1}
-            onPress={() => {
-              setIsEditingNickname(false);
-              setIsDrawerOpen(false);
-            }}
-            accessibilityLabel="Fechar menu ao tocar fora"
-          />
+        <Modal
+          visible={isDrawerOpen}
+          animationType="fade"
+          transparent
+          onRequestClose={() => {
+            setIsEditingNickname(false);
+            setIsDrawerOpen(false);
+          }}
+        >
+          <View style={styles.drawerOverlay}>
+            <TouchableOpacity
+              style={styles.backdropPressable}
+              activeOpacity={1}
+              onPress={() => {
+                setIsEditingNickname(false);
+                setIsDrawerOpen(false);
+              }}
+              accessibilityLabel="Fechar menu ao tocar fora"
+            />
 
-          <View
-            style={[
-              styles.drawerContainer,
-              { backgroundColor: colors.screenBackground },
-            ]}
-          >
-            {/* Botão de Fechar no topo direito */}
-            <View style={styles.drawerHeader}>
-              <TouchableOpacity
-                onPress={() => {
-                  setIsEditingNickname(false);
-                  setIsDrawerOpen(false);
-                }}
-                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                accessibilityLabel="Fechar menu"
-              >
-                <Ionicons name="close" size={28} color={colors.text} />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={styles.drawerScroll}
+            <View
+              style={[
+                styles.drawerContainer,
+                { backgroundColor: colors.screenBackground },
+              ]}
             >
-              {/* Seção da Usuária com Edição Inline */}
-              <View style={styles.userSection}>
-                <View style={styles.nameRow}>
-                  {isEditingNickname ? (
-                    <View style={styles.inlineEditWrapper}>
-                      <TextInput
-                        value={tempNickname}
-                        onChangeText={setTempNickname}
-                        autoFocus
-                        style={[
-                          styles.inlineInput,
-                          {
-                            color: colors.profileTitlePurple,
-                            borderColor: colors.primaryPurple,
-                            backgroundColor: colors.inputBackground,
-                          },
-                        ]}
-                        onSubmitEditing={handleSaveInlineNickname}
-                      />
-                      <TouchableOpacity
-                        style={[
-                          styles.inlineSaveBtn,
-                          { backgroundColor: colors.primaryPurple },
-                        ]}
-                        onPress={handleSaveInlineNickname}
-                        accessibilityLabel="Salvar apelido"
-                      >
-                        <Ionicons name="checkmark" size={18} color="#FFFFFF" />
-                      </TouchableOpacity>
-                    </View>
-                  ) : (
-                    <View style={styles.inlineDisplayWrapper}>
-                      <Text
-                        style={[
-                          styles.nicknameText,
-                          { color: colors.profileTitlePurple },
-                        ]}
-                      >
-                        {nickname}
-                      </Text>
-                      <TouchableOpacity
-                        style={styles.editIconBadge}
-                        onPress={() => {
-                          setTempNickname(nickname);
-                          setIsEditingNickname(true);
-                        }}
-                        accessibilityLabel="Editar apelido diretamente"
-                      >
-                        <Ionicons name="pencil" size={13} color="#FFFFFF" />
-                      </TouchableOpacity>
-                    </View>
-                  )}
+              <View style={styles.drawerHeader}>
+                <TouchableOpacity
+                  onPress={() => {
+                    setIsEditingNickname(false);
+                    setIsDrawerOpen(false);
+                  }}
+                  hitSlop={12}
+                  accessibilityLabel="Fechar menu"
+                >
+                  <Ionicons
+                    name="close"
+                    size={28}
+                    color={colors.text}
+                  />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.drawerScroll}
+              >
+                <View style={styles.userSection}>
+                  <View style={styles.nameRow}>
+                    {isEditingNickname ? (
+                      <View style={styles.inlineEditWrapper}>
+                        <TextInput
+                          value={tempNickname}
+                          onChangeText={setTempNickname}
+                          autoFocus
+                          style={[
+                            styles.inlineInput,
+                            {
+                              color: colors.profileTitlePurple,
+                              borderColor: colors.primaryPurple,
+                              backgroundColor: colors.inputBackground,
+                            },
+                          ]}
+                          onSubmitEditing={handleSaveInlineNickname}
+                        />
+
+                        <TouchableOpacity
+                          style={[
+                            styles.inlineSaveBtn,
+                            {
+                              backgroundColor: colors.primaryPurple,
+                            },
+                          ]}
+                          onPress={handleSaveInlineNickname}
+                          accessibilityLabel="Salvar apelido"
+                        >
+                          <Ionicons
+                            name="checkmark"
+                            size={18}
+                            color="#FFFFFF"
+                          />
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <View style={styles.inlineDisplayWrapper}>
+                        <Text
+                          style={[
+                            styles.nicknameText,
+                            { color: colors.profileTitlePurple },
+                          ]}
+                        >
+                          {nickname}
+                        </Text>
+
+                        <TouchableOpacity
+                          style={styles.editIconBadge}
+                          onPress={() => {
+                            setTempNickname(nickname);
+                            setIsEditingNickname(true);
+                          }}
+                          accessibilityLabel="Editar apelido diretamente"
+                        >
+                          <Ionicons
+                            name="pencil"
+                            size={13}
+                            color="#FFFFFF"
+                          />
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+
+                  <Text
+                    style={[
+                      styles.emailText,
+                      { color: colors.profileSubtitlePurple },
+                    ]}
+                  >
+                    {email}
+                  </Text>
                 </View>
+
+                <View style={styles.menuItemsList}>
+                  <ProfileMenuItem
+                    label="Configurações"
+                    onPress={() => {
+                      setIsDrawerOpen(false);
+                      router.push("/settings");
+                    }}
+                  />
+
+                  <ProfileMenuItem
+                    label={isDark ? "Modo claro" : "Modo escuro"}
+                    onPress={toggleTheme}
+                  />
+
+                  <ProfileMenuItem label="Histórico" />
+
+                  <ProfileMenuItem
+                    label="Sair"
+                    variant="danger"
+                    onPress={handleLogout}
+                  />
+                </View>
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
+
+        {reportFlow.creationSession && (
+          <CreateReportBottomSheet
+            key={reportFlow.creationSession.id}
+            visible
+            initialLocation={reportFlow.creationSession.location}
+            currentCoordinates={location ?? undefined}
+            currentAddress={
+              reportAddressSnapshot ||
+              reportFlow.creationSession.address
+            }
+            mapStyle={mapStyle}
+            onClose={reportFlow.closeCreateReport}
+            onSubmit={handleCreateReport}
+          />
+        )}
+
+        <DangerPointDetailsModal
+          report={reportFlow.selectedReport}
+          onClose={reportFlow.closeDetails}
+          onToggleConfirmation={reportFlow.toggleConfirmation}
+          onAddComment={reportFlow.addComment}
+        />
+
+        {!isRouteMode && selectedAddressInfo && (
+          <View style={styles.destinationCardContainer}>
+            <View
+              style={[
+                styles.destinationCard,
+                {
+                  backgroundColor: isDark
+                    ? colors.surface
+                    : "#FFFFFF",
+                  borderColor: isDark
+                    ? colors.border
+                    : "#E2D9F3",
+                },
+              ]}
+            >
+              <View style={styles.destinationCardTextCol}>
                 <Text
                   style={[
-                    styles.emailText,
-                    { color: colors.profileSubtitlePurple },
+                    styles.destinationCardTitle,
+                    { color: colors.text },
                   ]}
+                  numberOfLines={1}
                 >
-                  {email}
+                  {selectedAddressInfo.label.split(",")[0]}
+                </Text>
+
+                <Text
+                  style={[
+                    styles.destinationCardSubtitle,
+                    { color: colors.textMuted },
+                  ]}
+                  numberOfLines={1}
+                >
+                  {selectedAddressInfo.label
+                    .split(",")
+                    .slice(1)
+                    .join(", ")
+                    .trim()}
                 </Text>
               </View>
 
-              {/* Itens do Menu */}
-              <View style={styles.menuItemsList}>
-                <ProfileMenuItem
-                  label="Configurações"
-                  onPress={() => {
-                    setIsDrawerOpen(false);
-                    router.push("/settings");
-                  }}
+              <TouchableOpacity
+                style={[
+                  styles.reportIconBtn,
+                  {
+                    backgroundColor: isDark
+                      ? colors.inputBackground
+                      : "#F3EEF9",
+                    borderColor: isDark
+                      ? colors.border
+                      : "#D8CCF0",
+                  },
+                ]}
+                activeOpacity={0.8}
+                onPress={handleOpenReport}
+                accessibilityLabel="Relatar ocorrência neste local"
+              >
+                <Ionicons
+                  name="warning"
+                  size={18}
+                  color={colors.primaryPurple}
                 />
-                <ProfileMenuItem
-                  label={isDark ? "Modo claro" : "Modo escuro"}
-                  onPress={toggleTheme}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.routeActionBtn,
+                  { backgroundColor: colors.primaryPurple },
+                ]}
+                activeOpacity={0.85}
+                onPress={() =>
+                  handleTriggerRouteCalculation(
+                    selectedAddressInfo.coords,
+                    selectedAddressInfo.label,
+                  )
+                }
+              >
+                <Ionicons
+                  name="navigate"
+                  size={16}
+                  color="#FFFFFF"
+                  style={{ marginRight: 6 }}
                 />
-                <ProfileMenuItem label="Histórico" />
-                <ProfileMenuItem
-                  label="Sair"
-                  variant="danger"
-                  onPress={handleLogout}
+                <Text style={styles.routeActionBtnText}>
+                  Traçar Rota
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.closeDestinationBtn}
+                onPress={handleClearSearch}
+                accessibilityLabel="Desmarcar local"
+              >
+                <Ionicons
+                  name="close"
+                  size={20}
+                  color={colors.textMuted}
                 />
-              </View>
-            </ScrollView>
+              </TouchableOpacity>
+            </View>
           </View>
-        </View>
-      </Modal>
+        )}
 
-      {/* ================= BOTTOM SHEET ADICIONAR RELATO (FIGMA) ================= */}
-      <CreateReportBottomSheet
-        visible={isReportSheetOpen}
-        onClose={() => setIsReportSheetOpen(false)}
-        onSubmit={handleCreateReport}
-        currentAddress={
-          selectedAddressInfo?.label ||
-          (location ? "Minha localização atual (GPS)" : "São Paulo - SP")
-        }
-        currentCoordinates={selectedAddressInfo?.coords || currentCoords}
-      />
-
-      {/* ================= CARD DE CONFIRMAÇÃO DE DESTINO (TRAÇAR ROTA) ================= */}
-      {!isRouteMode && selectedAddressInfo && (
-        <View style={styles.destinationCardContainer}>
+        {isRouteMode && !!routeError && (
           <View
             style={[
-              styles.destinationCard,
+              styles.routeError,
               {
-                backgroundColor: isDark ? colors.surface : "#FFFFFF",
-                borderColor: isDark ? colors.border : "#E2D9F3",
+                backgroundColor: colors.surface,
+                borderColor: colors.border,
               },
             ]}
           >
-            <View style={styles.destinationCardTextCol}>
-              <Text
-                style={[styles.destinationCardTitle, { color: colors.text }]}
-                numberOfLines={1}
-              >
-                {selectedAddressInfo.label.split(",")[0]}
-              </Text>
-              <Text
-                style={[styles.destinationCardSubtitle, { color: colors.textMuted }]}
-                numberOfLines={1}
-              >
-                {selectedAddressInfo.label.split(",").slice(1).join(", ").trim()}
-              </Text>
-            </View>
+            <Text
+              accessibilityRole="alert"
+              style={{ color: colors.text, flex: 1 }}
+            >
+              {routeError}
+            </Text>
 
-            {/* Botão de Relato ao lado do Traçar Rota */}
             <TouchableOpacity
-              style={[
-                styles.reportIconBtn,
-                {
-                  backgroundColor: isDark ? colors.inputBackground : "#F3EEF9",
-                  borderColor: isDark ? colors.border : "#D8CCF0",
-                },
-              ]}
-              activeOpacity={0.8}
+              accessibilityRole="button"
               onPress={() => {
-                setIsReportSheetOpen(true);
+                if (selectedAddressInfo) {
+                  void handleTriggerRouteCalculation(
+                    selectedAddressInfo.coords,
+                    selectedAddressInfo.label,
+                  );
+                }
               }}
-              accessibilityLabel="Relatar ocorrência neste local"
+              style={{ padding: 10 }}
             >
-              <Ionicons name="warning" size={18} color={colors.primaryPurple} />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.routeActionBtn, { backgroundColor: colors.primaryPurple }]}
-              activeOpacity={0.85}
-              onPress={() =>
-                handleTriggerRouteCalculation(
-                  selectedAddressInfo.coords,
-                  selectedAddressInfo.label
-                )
-              }
-            >
-              <Ionicons name="navigate" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-              <Text style={styles.routeActionBtnText}>Traçar Rota</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.closeDestinationBtn}
-              onPress={handleClearSearch}
-              accessibilityLabel="Desmarcar local"
-            >
-              <Ionicons name="close" size={20} color={colors.textMuted} />
+              <Text
+                style={{
+                  color: colors.primaryPurple,
+                  fontWeight: "700",
+                }}
+              >
+                Tentar novamente
+              </Text>
             </TouchableOpacity>
           </View>
-        </View>
-      )}
+        )}
 
-      {/* ================= BOTTOM SHEET OPÇÕES DE ROTA (IMAGEM 2) ================= */}
-      {isRouteMode && (
-        <RouteOptionsBottomSheet
-          routes={calculatedRoutes}
-          selectedRouteId={selectedRouteId}
-          onSelectRoute={(id) => setSelectedRouteId(id)}
-          loading={isCalculatingRoutes}
-          exceeds30Percent={routeComparison?.exceeds_30_percent}
+        {isRouteMode && (
+          <RouteOptionsBottomSheet
+            routes={calculatedRoutes}
+            selectedRouteId={selectedRouteId}
+            onSelectRoute={setSelectedRouteId}
+            loading={isCalculatingRoutes}
+            exceeds30Percent={
+              routeComparison?.exceeds_30_percent
+            }
+          />
+        )}
+
+        <AddressSearchModal
+          visible={isSearchModalOpen}
+          onClose={() => setIsSearchModalOpen(false)}
+          onSelectAddress={handleSelectSuggestion}
+          initialQuery={searchQuery}
         />
-      )}
+      </View>
 
-      {/* ================= MODAL DE BUSCA EXPANDIDA COM RECENTES (IMAGEM 1) ================= */}
-      <AddressSearchModal
-        visible={isSearchModalOpen}
-        onClose={() => setIsSearchModalOpen(false)}
-        onSelectAddress={handleSelectSearchedAddress}
-        initialQuery={searchQuery}
-      />
-    </View>
-
-      {/* ================= BARRA INFERIOR PERSISTENTE (SOS SEMPRE ACESSÍVEL) ================= */}
       <BottomNavigation
         onTabPress={(tab) => router.push(tab)}
         onPanicPress={() => router.push("/emergency")}
@@ -775,6 +1061,19 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
+  routeError: {
+    position: "absolute",
+    top: 100,
+    left: 16,
+    right: 16,
+    zIndex: 30,
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
   safeArea: {
     flex: 1,
     width: "100%",
@@ -918,6 +1217,51 @@ const styles = StyleSheet.create({
     fontSize: theme.typography.sizes.sm,
     fontWeight: theme.typography.weights.bold,
     fontFamily: theme.typography.fontFamily,
+  },
+
+  reportHint: {
+    position: "absolute",
+    top: 76,
+    left: 16,
+    right: 16,
+    maxWidth: 480,
+    zIndex: 11,
+    padding: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+
+  reportHintRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+  },
+
+  reportHintText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+
+  reportTestButton: {
+    minHeight: 44,
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 4,
+    marginTop: 4,
+  },
+
+  reportTestText: {
+    fontSize: 12,
+    fontWeight: "700",
   },
 
   // FABs à Direita

@@ -1,27 +1,48 @@
-import React, { useState, useEffect } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  ScrollView,
-  TextInput,
-  Platform,
   ActivityIndicator,
+  BackHandler,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
+
 import { Ionicons } from "@expo/vector-icons";
 import { useAppTheme } from "../../../theme";
-import { addressService, AddressSuggestion } from "../../../services/api/addresses";
 
-export interface CreateReportData {
-  category: string;
-  description: string;
-  addressDetail: string;
-  period: string;
-  isAnonymous: boolean;
-  location: {
-    latitude: number;
-    longitude: number;
+import {
+  addressService,
+  type AddressSuggestion,
+} from "../../../services/api/addresses";
+
+import {
+  RiskMap,
+  type MapTileStyle,
+} from "../../map/components/RiskMap";
+
+import { DEFAULT_SP_COORDINATES } from "../../map/hooks/useCurrentLocation";
+import type { Coordinates } from "../../map/types";
+
+import {
+  coordinatesLabel,
+  isValidCoordinates,
+  type CreateReportPayload,
+} from "../reportModel";
+
+export interface CreateReportData extends CreateReportPayload {
+  address: string;
+  location: Coordinates & {
     address: string;
   };
 }
@@ -29,19 +50,75 @@ export interface CreateReportData {
 export interface CreateReportBottomSheetProps {
   visible: boolean;
   onClose: () => void;
-  onSubmit: (data: CreateReportData) => void;
+  onSubmit: (
+    data: CreateReportData,
+  ) => void | Promise<void>;
+
+  initialLocation?: Coordinates;
+  currentCoordinates?: Coordinates;
   currentAddress?: string;
-  currentCoordinates?: { latitude: number; longitude: number };
+  mapStyle?: MapTileStyle;
 }
 
-export const CreateReportBottomSheet: React.FC<CreateReportBottomSheetProps> = ({
+const INCIDENT_TYPES = [
+  "Assédio",
+  "Furto",
+  "Violência",
+  "Má iluminação",
+];
+
+const PERIODS = [
+  { label: "Manhã", value: "manha" },
+  { label: "Tarde", value: "tarde" },
+  { label: "Noite", value: "noite" },
+  { label: "Madrugada", value: "madrugada" },
+];
+
+function validLocation(
+  location?: Coordinates,
+): location is Coordinates {
+  return Boolean(
+    location && isValidCoordinates(location),
+  );
+}
+
+export function CreateReportBottomSheet({
   visible,
   onClose,
   onSubmit,
-  currentAddress = "São Paulo - SP",
-  currentCoordinates = { latitude: -23.5505, longitude: -46.6333 },
-}) => {
-  const { colors, isDark } = useAppTheme();
+  initialLocation,
+  currentCoordinates,
+  currentAddress = "Local selecionado no mapa",
+  mapStyle = "streets",
+}: CreateReportBottomSheetProps) {
+  const { isDark } = useAppTheme();
+
+  const getInitialLocation = (): Coordinates => ({
+    ...(validLocation(initialLocation)
+      ? initialLocation
+      : validLocation(currentCoordinates)
+        ? currentCoordinates
+        : DEFAULT_SP_COORDINATES),
+  });
+
+  const [selectedLocation, setSelectedLocation] =
+    useState<Coordinates>(getInitialLocation);
+
+  const [previewCenter, setPreviewCenter] =
+    useState<Coordinates>(getInitialLocation);
+
+  const [cameraRevision, setCameraRevision] = useState(0);
+
+  const [selectedAddress, setSelectedAddress] =
+    useState(currentAddress);
+
+  const [query, setQuery] = useState(currentAddress);
+  const [addressDirty, setAddressDirty] = useState(false);
+  const [isEditingAddress, setIsEditingAddress] = useState(false);
+
+  const [results, setResults] = useState<AddressSuggestion[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [addressError, setAddressError] = useState("");
 
   const [addressDetail, setAddressDetail] = useState("");
   const [incidentType, setIncidentType] = useState("Assédio");
@@ -49,186 +126,664 @@ export const CreateReportBottomSheet: React.FC<CreateReportBottomSheetProps> = (
   const [period, setPeriod] = useState("noite");
   const [isAnonymous, setIsAnonymous] = useState(true);
 
-  // Localização ativa do relato (permite à usuária alterar para onde o fato ocorreu - RF09)
-  const [selectedAddress, setSelectedAddress] = useState(currentAddress);
-  const [selectedCoords, setSelectedCoords] = useState(currentCoordinates);
+  const [submitError, setSubmitError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Busca e seleção de endereço alternativo
-  const [isEditingAddress, setIsEditingAddress] = useState(false);
-  const [addressSearchInput, setAddressSearchInput] = useState("");
-  const [suggestions, setSuggestions] = useState<AddressSuggestion[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
+  const searchIdRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const submittingRef = useRef(false);
+  const mountedRef = useRef(true);
+  const visibleRef = useRef(visible);
+  const wasVisibleRef = useRef(false);
+  const sessionIdRef = useRef(0);
 
-  useEffect(() => {
-    setSelectedAddress(currentAddress);
-    if (currentCoordinates) {
-      setSelectedCoords(currentCoordinates);
+  const initialSessionRef = useRef({
+    location: getInitialLocation(),
+    address: currentAddress,
+  });
+
+  visibleRef.current = visible;
+
+  const invalidateSearch = useCallback(() => {
+    searchIdRef.current += 1;
+
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
     }
-  }, [currentAddress, currentCoordinates]);
 
-  // Debounce na busca de endereços dentro do modal
+    timerRef.current = null;
+    setIsSearching(false);
+  }, []);
+
   useEffect(() => {
-    if (!isEditingAddress || addressSearchInput.trim().length < 3) {
-      setSuggestions([]);
-      setIsSearching(false);
+    mountedRef.current = true;
+
+    return () => {
+      mountedRef.current = false;
+      sessionIdRef.current += 1;
+      searchIdRef.current += 1;
+
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
+    };
+  }, []);
+
+  // Reinicia somente ao abrir uma nova sessão.
+  // Atualizações do GPS não sobrescrevem o rascunho.
+  useEffect(() => {
+    if (visible && !wasVisibleRef.current) {
+      const location = getInitialLocation();
+
+      initialSessionRef.current = {
+        location,
+        address: currentAddress,
+      };
+
+      sessionIdRef.current += 1;
+
+      invalidateSearch();
+
+      setSelectedLocation(location);
+      setPreviewCenter(location);
+      setSelectedAddress(currentAddress);
+      setQuery(currentAddress);
+
+      setAddressDirty(false);
+      setIsEditingAddress(false);
+      setResults([]);
+      setAddressError("");
+
+      setAddressDetail("");
+      setIncidentType("Assédio");
+      setDescription("");
+      setPeriod("noite");
+      setIsAnonymous(true);
+
+      setSubmitError("");
+      submittingRef.current = false;
+      setIsSubmitting(false);
+    }
+
+    if (!visible) {
+      invalidateSearch();
+    }
+
+    wasVisibleRef.current = visible;
+  }, [
+    visible,
+    currentAddress,
+    initialLocation?.latitude,
+    initialLocation?.longitude,
+    currentCoordinates?.latitude,
+    currentCoordinates?.longitude,
+    invalidateSearch,
+  ]);
+
+  const handleClose = useCallback(() => {
+    if (submittingRef.current) return;
+
+    invalidateSearch();
+    onClose();
+  }, [invalidateSearch, onClose]);
+
+  useEffect(() => {
+    if (!visible) return;
+
+    const subscription = BackHandler.addEventListener(
+      "hardwareBackPress",
+      () => {
+        handleClose();
+        return true;
+      },
+    );
+
+    return () => subscription.remove();
+  }, [visible, handleClose]);
+
+  const runSearch = useCallback(
+    async (value: string) => {
+      if (
+        !visibleRef.current ||
+        submittingRef.current
+      ) {
+        return;
+      }
+
+      invalidateSearch();
+
+      const normalized = value.trim();
+
+      if (normalized.length < 3) {
+        setResults([]);
+        setAddressError(
+          "Digite pelo menos 3 caracteres para buscar.",
+        );
+        return;
+      }
+
+      const requestId = searchIdRef.current;
+
+      setIsSearching(true);
+      setAddressError("");
+      setResults([]);
+
+      try {
+        const suggestions =
+          await addressService.getSuggestions(
+            normalized,
+            4,
+          );
+
+        if (
+          !mountedRef.current ||
+          !visibleRef.current ||
+          requestId !== searchIdRef.current
+        ) {
+          return;
+        }
+
+        const validSuggestions =
+          Array.isArray(suggestions)
+            ? suggestions.filter((item) =>
+                validLocation({
+                  latitude: Number(item.latitude),
+                  longitude: Number(item.longitude),
+                }),
+              )
+            : [];
+
+        setResults(validSuggestions);
+
+        if (!validSuggestions.length) {
+          setAddressError(
+            "Nenhum endereço encontrado. Inclua bairro e cidade.",
+          );
+        }
+      } catch (error) {
+        if (
+          !mountedRef.current ||
+          !visibleRef.current ||
+          requestId !== searchIdRef.current
+        ) {
+          return;
+        }
+
+        setAddressError(
+          error instanceof Error
+            ? error.message
+            : "Não foi possível buscar o endereço.",
+        );
+      } finally {
+        if (
+          mountedRef.current &&
+          visibleRef.current &&
+          requestId === searchIdRef.current
+        ) {
+          setIsSearching(false);
+        }
+      }
+    },
+    [invalidateSearch],
+  );
+
+  useEffect(() => {
+    if (
+      !visible ||
+      !isEditingAddress ||
+      !addressDirty ||
+      isSubmitting ||
+      query.trim().length < 3
+    ) {
       return;
     }
 
-    setIsSearching(true);
-    const timer = setTimeout(async () => {
-      try {
-        const results = await addressService.getSuggestions(addressSearchInput, 4);
-        setSuggestions(results);
-      } catch {
-        setSuggestions([]);
-      } finally {
-        setIsSearching(false);
-      }
+    timerRef.current = setTimeout(() => {
+      void runSearch(query);
     }, 350);
 
-    return () => clearTimeout(timer);
-  }, [addressSearchInput, isEditingAddress]);
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
 
-  const handleSelectSuggestion = (suggestion: AddressSuggestion) => {
-    setSelectedAddress(suggestion.label);
-    setSelectedCoords({
-      latitude: suggestion.latitude,
-      longitude: suggestion.longitude,
-    });
-    setIsEditingAddress(false);
-    setAddressSearchInput("");
-    setSuggestions([]);
-  };
+      timerRef.current = null;
+    };
+  }, [
+    query,
+    isEditingAddress,
+    addressDirty,
+    visible,
+    isSubmitting,
+    runSearch,
+  ]);
 
-  const handleResetToGps = () => {
-    setSelectedAddress(currentAddress);
-    setSelectedCoords(currentCoordinates);
+  function chooseLocation(
+    coordinates: Coordinates,
+    label: string,
+    recenter: boolean,
+  ) {
+    if (
+      !validLocation(coordinates) ||
+      submittingRef.current
+    ) {
+      return;
+    }
+
+    invalidateSearch();
+
+    setSelectedLocation({ ...coordinates });
+
+    if (recenter) {
+      setPreviewCenter({ ...coordinates });
+      setCameraRevision((value) => value + 1);
+    }
+
+    setSelectedAddress(label);
+    setQuery(label);
+
+    setAddressDirty(false);
     setIsEditingAddress(false);
-    setAddressSearchInput("");
-    setSuggestions([]);
-  };
+    setAddressError("");
+    setResults([]);
+  }
+
+  function chooseAddress(result: AddressSuggestion) {
+    chooseLocation(
+      {
+        latitude: Number(result.latitude),
+        longitude: Number(result.longitude),
+      },
+      result.label,
+      true,
+    );
+  }
+
+  function chooseMapLocation(coordinates: Coordinates) {
+    chooseLocation(
+      coordinates,
+      `Local no mapa · ${coordinatesLabel(coordinates)}`,
+      false,
+    );
+  }
+
+  function resetToCurrentLocation() {
+    const coordinates = validLocation(currentCoordinates)
+      ? currentCoordinates
+      : initialSessionRef.current.location;
+
+    const label = validLocation(currentCoordinates)
+      ? `Localização atual · ${coordinatesLabel(coordinates)}`
+      : initialSessionRef.current.address;
+
+    chooseLocation(coordinates, label, true);
+  }
+
+  function toggleAddressEditing() {
+    invalidateSearch();
+    setResults([]);
+    setAddressError("");
+
+    if (isEditingAddress) {
+      setQuery(selectedAddress);
+      setAddressDirty(false);
+      setIsEditingAddress(false);
+    } else {
+      setQuery("");
+      setAddressDirty(false);
+      setIsEditingAddress(true);
+    }
+  }
+
+  async function handleSubmit() {
+    if (submittingRef.current) return;
+
+    setSubmitError("");
+
+    if (addressDirty) {
+      setSubmitError(
+        "Selecione um resultado da busca ou toque no mapa para confirmar o endereço.",
+      );
+      return;
+    }
+
+    if (!validLocation(selectedLocation)) {
+      setSubmitError(
+        "Selecione uma localização válida no mapa.",
+      );
+      return;
+    }
+
+    const normalizedDescription = description.trim();
+
+    if (
+      normalizedDescription.length < 10 ||
+      normalizedDescription.length > 1000
+    ) {
+      setSubmitError(
+        "Descreva o ocorrido com 10 a 1.000 caracteres.",
+      );
+      return;
+    }
+
+    const address =
+      selectedAddress.trim() ||
+      `Local no mapa · ${coordinatesLabel(selectedLocation)}`;
+
+    const payload: CreateReportData = {
+      category: incidentType,
+      description: normalizedDescription,
+      addressDetail: addressDetail.trim(),
+      period,
+      isAnonymous,
+      address,
+      location: {
+        ...selectedLocation,
+        address,
+      },
+    };
+
+    const sessionId = sessionIdRef.current;
+
+    submittingRef.current = true;
+    setIsSubmitting(true);
+    invalidateSearch();
+
+    try {
+      await onSubmit(payload);
+    } catch (error) {
+      if (
+        !mountedRef.current ||
+        sessionId !== sessionIdRef.current
+      ) {
+        return;
+      }
+
+      setSubmitError(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível publicar o relato.",
+      );
+
+      submittingRef.current = false;
+      setIsSubmitting(false);
+      return;
+    }
+
+    if (
+      !mountedRef.current ||
+      sessionId !== sessionIdRef.current
+    ) {
+      return;
+    }
+
+    submittingRef.current = false;
+    setIsSubmitting(false);
+
+    if (visibleRef.current) {
+      onClose();
+    }
+  }
 
   if (!visible) return null;
 
   return (
-    <View style={styles.overlay}>
-      {/* Backdrop clicável para fechar tocando fora */}
-      <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose} />
+    <KeyboardAvoidingView
+      style={s.overlay}
+      behavior={
+        Platform.OS === "ios" ? "padding" : "height"
+      }
+    >
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel="Fechar formulário"
+        style={StyleSheet.absoluteFill}
+        activeOpacity={1}
+        onPress={handleClose}
+      />
 
       <View
         style={[
-          styles.sheetContainer,
+          s.sheet,
           {
-            backgroundColor: isDark ? "#2A1F45" : "#6D4DA8", // Roxo do Figma
+            backgroundColor: isDark
+              ? "#2A1F45"
+              : "#8055B5",
           },
         ]}
       >
-        {/* Header com Título e Fechar */}
-        <View style={styles.header}>
-          <Text style={styles.title}>Adicionar relato</Text>
-          <TouchableOpacity onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-            <Ionicons name="close" size={26} color="#FFFFFF" />
+        <View style={s.header}>
+          <Text
+            accessibilityRole="header"
+            style={s.title}
+          >
+            Adicionar relato
+          </Text>
+
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Fechar formulário"
+            onPress={handleClose}
+            style={s.close}
+          >
+            <Ionicons
+              name="close-outline"
+              size={27}
+              color="#FFFFFF"
+            />
           </TouchableOpacity>
         </View>
 
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-          {/* Endereço Selecionado com opção de alterar (RF09) */}
-          <View style={styles.labelRow}>
-            <Text style={styles.label}>Local do incidente</Text>
-            {!isEditingAddress ? (
-              <TouchableOpacity
-                onPress={() => setIsEditingAddress(true)}
-                style={styles.changeAddressBtn}
-                accessibilityLabel="Alterar local do incidente"
-              >
-                <Ionicons name="create-outline" size={14} color="#EDE7F6" style={{ marginRight: 4 }} />
-                <Text style={styles.changeAddressText}>Alterar local</Text>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity
-                onPress={handleResetToGps}
-                style={styles.changeAddressBtn}
-                accessibilityLabel="Usar localização do GPS"
-              >
-                <Ionicons name="navigate-outline" size={14} color="#EDE7F6" style={{ marginRight: 4 }} />
-                <Text style={styles.changeAddressText}>Usar GPS</Text>
-              </TouchableOpacity>
-            )}
+        <ScrollView
+          style={{ flexShrink: 1 }}
+          contentContainerStyle={s.scrollContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={s.locationLabelRow}>
+            <Text
+              style={[
+                s.label,
+                { marginTop: 0, marginBottom: 0 },
+              ]}
+            >
+              Local do incidente
+            </Text>
+
+            <TouchableOpacity
+              disabled={isSubmitting}
+              onPress={toggleAddressEditing}
+              accessibilityRole="button"
+              accessibilityLabel={
+                isEditingAddress
+                  ? "Cancelar busca de endereço"
+                  : "Alterar local do incidente"
+              }
+              style={s.changeAddressButton}
+            >
+              <Ionicons
+                name={
+                  isEditingAddress
+                    ? "close-outline"
+                    : "create-outline"
+                }
+                size={15}
+                color="#FFFFFF"
+              />
+              <Text style={s.changeAddressText}>
+                {isEditingAddress
+                  ? "Cancelar busca"
+                  : "Alterar local"}
+              </Text>
+            </TouchableOpacity>
           </View>
 
-          {!isEditingAddress ? (
-            <View style={styles.fieldBox}>
-              <Ionicons name="location-outline" size={18} color="#4A3475" style={{ marginRight: 6 }} />
-              <Text style={styles.addressText} numberOfLines={2}>
-                {selectedAddress}
-              </Text>
-            </View>
-          ) : (
-            <View style={styles.searchSection}>
-              <View style={styles.searchInputRow}>
-                <Ionicons name="search" size={16} color="#4A3475" style={{ marginRight: 6 }} />
-                <TextInput
-                  style={styles.addressSearchInput}
-                  placeholder="Digite rua, avenida ou praça..."
-                  placeholderTextColor="#7C6B98"
-                  value={addressSearchInput}
-                  onChangeText={setAddressSearchInput}
-                  autoFocus
-                />
+          <View style={s.addressCard}>
+            <View style={s.searchRow}>
+              <TextInput
+                accessibilityLabel="Buscar endereço do relato"
+                editable={!isSubmitting}
+                value={query}
+                onChangeText={(value) => {
+                  invalidateSearch();
+                  setQuery(value);
+                  setAddressDirty(true);
+                  setIsEditingAddress(true);
+                  setResults([]);
+                  setAddressError("");
+                }}
+                placeholder="Selecione o endereço"
+                placeholderTextColor="#81758E"
+                returnKeyType="search"
+                onSubmitEditing={() => {
+                  void runSearch(query);
+                }}
+                style={s.searchInput}
+              />
+
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel="Buscar endereço"
+                disabled={isSearching || isSubmitting}
+                onPress={() => {
+                  void runSearch(query);
+                }}
+                style={s.searchButton}
+              >
                 {isSearching ? (
-                  <ActivityIndicator size="small" color="#4A3475" />
+                  <ActivityIndicator
+                    size="small"
+                    color="#8055B5"
+                  />
                 ) : (
-                  <TouchableOpacity onPress={() => setIsEditingAddress(false)}>
-                    <Ionicons name="close-circle" size={18} color="#8C7CA8" />
-                  </TouchableOpacity>
+                  <Ionicons
+                    name="search"
+                    size={20}
+                    color="#8055B5"
+                  />
                 )}
-              </View>
-
-              {suggestions.length > 0 && (
-                <View style={styles.modalSuggestionsList}>
-                  {suggestions.map((item) => (
-                    <TouchableOpacity
-                      key={item.id}
-                      style={styles.modalSuggestionItem}
-                      onPress={() => handleSelectSuggestion(item)}
-                    >
-                      <Ionicons name="location-sharp" size={14} color="#6D4DA8" style={{ marginRight: 6 }} />
-                      <Text style={styles.modalSuggestionText} numberOfLines={1}>
-                        {item.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              )}
+              </TouchableOpacity>
             </View>
-          )}
 
-          {/* Especificação do endereço */}
-          <Text style={styles.label}>Especificação do endereço (opcional)</Text>
+            {!!addressError && (
+              <Text
+                accessibilityRole="alert"
+                style={s.addressError}
+              >
+                {addressError}
+              </Text>
+            )}
+
+            {!!results.length && (
+              <View style={s.results}>
+                {results.map((result) => (
+                  <TouchableOpacity
+                    key={result.id}
+                    accessibilityRole="button"
+                    onPress={() =>
+                      chooseAddress(result)
+                    }
+                    style={s.result}
+                  >
+                    <Ionicons
+                      name="location-outline"
+                      size={18}
+                      color="#8055B5"
+                    />
+                    <Text style={s.resultText}>
+                      {result.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
+            <View style={s.map}>
+              <RiskMap
+                center={previewCenter}
+                cameraRevision={cameraRevision}
+                zoom={17}
+                mapStyle={mapStyle}
+                selectedLocation={selectedLocation}
+                onMapPress={chooseMapLocation}
+                interactive={!isSubmitting}
+              />
+            </View>
+          </View>
+
+          <View style={s.locationTools}>
+            <Text
+              style={[
+                s.mapHint,
+                { flex: 1, marginTop: 0 },
+              ]}
+            >
+              Toque no mapa para ajustar o ponto exato.
+            </Text>
+
+            <TouchableOpacity
+              disabled={isSubmitting}
+              onPress={resetToCurrentLocation}
+              accessibilityRole="button"
+              accessibilityLabel="Usar localização atual ou local inicial"
+              style={s.resetLocationButton}
+            >
+              <Ionicons
+                name="navigate-outline"
+                size={15}
+                color="#FFFFFF"
+              />
+              <Text style={s.changeAddressText}>
+                {validLocation(currentCoordinates)
+                  ? "Usar local atual"
+                  : "Usar local inicial"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <Text style={s.selectedAddress}>
+            Local selecionado: {selectedAddress}
+          </Text>
+
+          <Text style={s.label}>
+            Especificação do endereço (opcional)
+          </Text>
+
           <TextInput
-            style={styles.inputBox}
-            placeholder="Ex.: em frente ao supermercado X, esquina com a rua Y"
-            placeholderTextColor="#8C7CA8"
+            editable={!isSubmitting}
+            style={s.input}
             value={addressDetail}
             onChangeText={setAddressDetail}
+            placeholder="Ex.: em frente ao supermercado X"
+            placeholderTextColor="#8C7CA8"
+            maxLength={160}
           />
 
-          {/* Tipo de incidente */}
-          <Text style={styles.label}>Tipo de incidente</Text>
-          <View style={styles.pillsRow}>
-            {["Assédio", "Furto", "Violência", "Má iluminação"].map((type) => (
+          <Text style={s.label}>
+            Tipo de incidente
+          </Text>
+
+          <View style={s.pillsRow}>
+            {INCIDENT_TYPES.map((type) => (
               <TouchableOpacity
                 key={type}
-                style={[
-                  styles.pillButton,
-                  incidentType === type && styles.pillButtonActive,
-                ]}
+                disabled={isSubmitting}
+                accessibilityRole="radio"
+                accessibilityState={{
+                  checked: incidentType === type,
+                }}
                 onPress={() => setIncidentType(type)}
+                style={[
+                  s.pill,
+                  incidentType === type &&
+                    s.pillActive,
+                ]}
               >
                 <Text
                   style={[
-                    styles.pillText,
-                    incidentType === type && styles.pillTextActive,
+                    s.pillText,
+                    incidentType === type &&
+                      s.pillTextActive,
                   ]}
                 >
                   {type}
@@ -237,248 +792,299 @@ export const CreateReportBottomSheet: React.FC<CreateReportBottomSheetProps> = (
             ))}
           </View>
 
-          {/* Descrição */}
-          <Text style={styles.label}>Descrição</Text>
+          <Text style={s.label}>Descrição</Text>
+
           <TextInput
-            style={[styles.inputBox, styles.textArea]}
-            placeholder="Escreva uma pequena descrição do ocorrido"
-            placeholderTextColor="#8C7CA8"
-            multiline
-            numberOfLines={3}
+            accessibilityLabel="Descrição do ocorrido"
+            editable={!isSubmitting}
+            style={[s.input, s.textArea]}
             value={description}
             onChangeText={setDescription}
+            placeholder="Escreva uma pequena descrição"
+            placeholderTextColor="#8C7CA8"
+            multiline
+            maxLength={1000}
+            textAlignVertical="top"
           />
 
-          {/* Período */}
-          <Text style={styles.label}>Período</Text>
-          <View style={styles.pillsRow}>
-            {[
-              { label: "Manhã", value: "manha" },
-              { label: "Tarde", value: "tarde" },
-              { label: "Noite", value: "noite" },
-              { label: "Madrugada", value: "madrugada" },
-            ].map((p) => (
+          <Text style={s.label}>Período</Text>
+
+          <View style={s.pillsRow}>
+            {PERIODS.map((item) => (
               <TouchableOpacity
-                key={p.value}
+                key={item.value}
+                disabled={isSubmitting}
+                accessibilityRole="radio"
+                accessibilityState={{
+                  checked: period === item.value,
+                }}
+                onPress={() =>
+                  setPeriod(item.value)
+                }
                 style={[
-                  styles.pillButton,
-                  period === p.value && styles.pillButtonActive,
+                  s.pill,
+                  period === item.value &&
+                    s.pillActive,
                 ]}
-                onPress={() => setPeriod(p.value)}
               >
                 <Text
                   style={[
-                    styles.pillText,
-                    period === p.value && styles.pillTextActive,
+                    s.pillText,
+                    period === item.value &&
+                      s.pillTextActive,
                   ]}
                 >
-                  {p.label}
+                  {item.label}
                 </Text>
               </TouchableOpacity>
             ))}
           </View>
 
-          {/* Manter anonimato? */}
-          <Text style={styles.label}>Manter anonimato?</Text>
-          <View style={styles.radioRow}>
-            <TouchableOpacity
-              style={styles.radioOption}
-              onPress={() => setIsAnonymous(true)}
-            >
-              <Ionicons
-                name={isAnonymous ? "radio-button-on" : "radio-button-off"}
-                size={20}
-                color="#FFFFFF"
-              />
-              <Text style={styles.radioLabel}>Sim</Text>
-            </TouchableOpacity>
+          <Text style={s.label}>
+            Manter anonimato?
+          </Text>
 
-            <TouchableOpacity
-              style={styles.radioOption}
-              onPress={() => setIsAnonymous(false)}
-            >
-              <Ionicons
-                name={!isAnonymous ? "radio-button-on" : "radio-button-off"}
-                size={20}
-                color="#FFFFFF"
-              />
-              <Text style={styles.radioLabel}>Não</Text>
-            </TouchableOpacity>
+          <View style={s.radioRow}>
+            {[true, false].map((value) => (
+              <TouchableOpacity
+                key={String(value)}
+                disabled={isSubmitting}
+                accessibilityRole="radio"
+                accessibilityLabel={
+                  value
+                    ? "Publicar anonimamente"
+                    : "Publicar com identificação"
+                }
+                accessibilityState={{
+                  checked: isAnonymous === value,
+                }}
+                onPress={() =>
+                  setIsAnonymous(value)
+                }
+                style={s.radioOption}
+              >
+                <Ionicons
+                  name={
+                    isAnonymous === value
+                      ? "radio-button-on"
+                      : "radio-button-off"
+                  }
+                  size={20}
+                  color="#FFFFFF"
+                />
+                <Text style={s.radioText}>
+                  {value ? "Sim" : "Não"}
+                </Text>
+              </TouchableOpacity>
+            ))}
           </View>
 
-          {/* Rodapé: Cancelar e Concluir */}
-          <View style={styles.actionsRow}>
-            <TouchableOpacity style={styles.cancelBtn} onPress={onClose}>
-              <Text style={styles.cancelText}>Cancelar</Text>
+          {!!submitError && (
+            <Text
+              accessibilityRole="alert"
+              style={s.submitError}
+            >
+              {submitError}
+            </Text>
+          )}
+
+          <View style={s.actions}>
+            <TouchableOpacity
+              disabled={isSubmitting}
+              onPress={handleClose}
+              style={s.cancel}
+            >
+              <Text style={s.cancelText}>
+                Cancelar
+              </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.submitBtn}
+              disabled={isSubmitting}
               onPress={() => {
-                onSubmit({
-                  category: incidentType,
-                  description,
-                  addressDetail,
-                  period,
-                  isAnonymous,
-                  location: {
-                    latitude: selectedCoords.latitude,
-                    longitude: selectedCoords.longitude,
-                    address: selectedAddress,
-                  },
-                });
-                onClose();
+                void handleSubmit();
               }}
+              style={[
+                s.submit,
+                isSubmitting && { opacity: 0.6 },
+              ]}
             >
-              <Text style={styles.submitText}>Concluir</Text>
+              <Text style={s.submitText}>
+                {isSubmitting
+                  ? "Publicando…"
+                  : "Concluir"}
+              </Text>
             </TouchableOpacity>
           </View>
         </ScrollView>
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
-};
+}
 
-const styles = StyleSheet.create({
+const s = StyleSheet.create({
   overlay: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+    ...StyleSheet.absoluteFillObject,
     zIndex: 100,
     justifyContent: "flex-end",
-    backgroundColor: "rgba(0, 0, 0, 0.45)",
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.45)",
   },
-  backdrop: {
-    flex: 1,
-  },
-  sheetContainer: {
+  sheet: {
     width: "94%",
     maxWidth: 500,
-    alignSelf: "center",
-    maxHeight: "85%",
+    maxHeight: "90%",
     borderRadius: 24,
     marginBottom: 8,
     paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 20,
+    paddingTop: 14,
+    paddingBottom: 16,
     elevation: 12,
     shadowColor: "#000000",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 12,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.15)",
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 16,
+    gap: 12,
+    marginBottom: 12,
   },
   title: {
-    fontSize: 22,
-    fontWeight: "bold",
+    flex: 1,
+    fontSize: 25,
+    fontWeight: "600",
     color: "#FFFFFF",
   },
-  scrollContent: {
-    paddingBottom: 24,
+  close: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: -8,
   },
-  labelRow: {
+  scrollContent: {
+    paddingBottom: 12,
+  },
+  locationLabelRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    gap: 8,
     marginTop: 12,
-    marginBottom: 6,
+    marginBottom: 7,
   },
-  label: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#E2D9F3",
-  },
-  changeAddressBtn: {
+  changeAddressButton: {
+    minHeight: 36,
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 2,
-    paddingHorizontal: 6,
-    borderRadius: 6,
-    backgroundColor: "rgba(255, 255, 255, 0.15)",
+    gap: 5,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    backgroundColor: "rgba(255,255,255,0.12)",
   },
   changeAddressText: {
-    fontSize: 11,
     color: "#FFFFFF",
+    fontSize: 11,
     fontWeight: "600",
   },
-  fieldBox: {
+  locationTools: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#EDE7F6",
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    minHeight: 44,
-    paddingVertical: 8,
+    gap: 8,
+    marginTop: 6,
   },
-  addressText: {
-    flex: 1,
+  resetLocationButton: {
+    minHeight: 40,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 4,
+  },
+  label: {
+    color: "#F1EAF8",
     fontSize: 13,
-    color: "#4A3475",
     fontWeight: "500",
+    marginTop: 16,
+    marginBottom: 7,
   },
-  searchSection: {
-    backgroundColor: "#EDE7F6",
-    borderRadius: 12,
+  addressCard: {
+    backgroundColor: "#EAE4F2",
+    borderRadius: 13,
     overflow: "hidden",
   },
-  searchInputRow: {
+  searchRow: {
+    minHeight: 44,
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 12,
-    height: 44,
   },
-  addressSearchInput: {
+  searchInput: {
     flex: 1,
+    minWidth: 0,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    color: "#4A3475",
     fontSize: 13,
-    color: "#37235E",
-    paddingVertical: 0,
-    ...Platform.select({
-      web: {
-        outlineStyle: "none",
-        outlineWidth: 0,
-        outlineColor: "transparent",
-        boxShadow: "none",
-      } as any,
-    }),
   },
-  modalSuggestionsList: {
-    backgroundColor: "#F5F3FF",
-    borderTopWidth: 1,
-    borderTopColor: "#DDD6FE",
+  searchButton: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  modalSuggestionItem: {
+  addressError: {
+    color: "#9F1239",
+    fontSize: 12,
+    lineHeight: 18,
+    paddingHorizontal: 12,
+    paddingBottom: 10,
+  },
+  results: {
+    backgroundColor: "#FFFFFF",
+  },
+  result: {
+    minHeight: 52,
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#EDE7F6",
+    gap: 8,
+    padding: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "#DDD5E8",
   },
-  modalSuggestionText: {
+  resultText: {
     flex: 1,
+    color: "#4A3475",
     fontSize: 12,
-    color: "#4C1D95",
+    lineHeight: 18,
   },
-  inputBox: {
+  map: {
+    height: 300,
+    overflow: "hidden",
+  },
+  mapHint: {
+    color: "#F1EAF8",
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 8,
+  },
+  selectedAddress: {
+    color: "#E2D9F3",
+    fontSize: 11,
+    lineHeight: 17,
+    marginTop: 4,
+  },
+  input: {
     backgroundColor: "#EDE7F6",
     borderRadius: 12,
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 12,
     fontSize: 14,
     color: "#37235E",
   },
   textArea: {
-    minHeight: 70,
-    textAlignVertical: "top",
+    minHeight: 90,
   },
   pillsRow: {
     flexDirection: "row",
@@ -486,21 +1092,21 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 6,
   },
-  pillButton: {
-    backgroundColor: "rgba(255, 255, 255, 0.15)",
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
+  pill: {
+    backgroundColor: "rgba(255,255,255,0.15)",
     borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.3)",
+    borderColor: "rgba(255,255,255,0.3)",
+    paddingHorizontal: 13,
+    paddingVertical: 9,
+    borderRadius: 20,
   },
-  pillButtonActive: {
+  pillActive: {
     backgroundColor: "#FFFFFF",
     borderColor: "#FFFFFF",
   },
   pillText: {
-    fontSize: 12,
     color: "#FFFFFF",
+    fontSize: 12,
     fontWeight: "600",
   },
   pillTextActive: {
@@ -508,53 +1114,57 @@ const styles = StyleSheet.create({
   },
   radioRow: {
     flexDirection: "row",
-    alignItems: "center",
     gap: 24,
-    marginTop: 4,
-    marginBottom: 16,
   },
   radioOption: {
+    minHeight: 44,
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
   },
-  radioLabel: {
-    fontSize: 14,
+  radioText: {
     color: "#FFFFFF",
-    fontWeight: "500",
+    fontSize: 14,
   },
-  actionsRow: {
+  submitError: {
+    color: "#FFFFFF",
+    backgroundColor: "rgba(120,0,30,0.35)",
+    padding: 12,
+    borderRadius: 12,
+    fontSize: 13,
+    lineHeight: 20,
+    marginTop: 12,
+  },
+  actions: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    gap: 12,
     marginTop: 20,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: "rgba(255, 255, 255, 0.15)",
+    borderTopColor: "rgba(255,255,255,0.15)",
   },
-  cancelBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
+  cancel: {
+    minHeight: 44,
+    paddingHorizontal: 12,
+    justifyContent: "center",
   },
   cancelText: {
-    fontSize: 15,
     color: "#FFFFFF",
+    fontSize: 14,
     fontWeight: "600",
   },
-  submitBtn: {
+  submit: {
+    minHeight: 44,
+    paddingHorizontal: 24,
+    borderRadius: 22,
     backgroundColor: "#FFFFFF",
-    paddingVertical: 10,
-    paddingHorizontal: 28,
-    borderRadius: 24,
-    elevation: 3,
-    shadowColor: "#000000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
+    justifyContent: "center",
   },
   submitText: {
-    fontSize: 15,
     color: "#6D4DA8",
-    fontWeight: "bold",
+    fontSize: 14,
+    fontWeight: "700",
   },
 });
