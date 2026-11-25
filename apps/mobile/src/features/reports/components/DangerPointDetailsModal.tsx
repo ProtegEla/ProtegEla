@@ -25,12 +25,20 @@ import {
 type Props = {
   report: DangerReport | null;
   onClose: () => void;
-  onToggleConfirmation: (id: string) => void;
+  onToggleConfirmation: (
+    id: string,
+  ) => void | Promise<void>;
+
   onAddComment: (
     reportId: string,
     text: string,
     parentId?: string,
-  ) => void;
+  ) => void | Promise<void>;
+
+  hasMoreComments: boolean;
+  loadingMore: boolean;
+  commentsError: string;
+  loadMoreComments: () => void | Promise<void>;
 };
 
 const PERIOD_DESCRIPTIONS: Record<string, string> = {
@@ -45,8 +53,15 @@ export function DangerPointDetailsModal({
   onClose,
   onToggleConfirmation,
   onAddComment,
+  hasMoreComments,
+  loadingMore,
+  commentsError,
+  loadMoreComments
 }: Props) {
   const insets = useSafeAreaInsets();
+
+  const [sending, setSending] = useState(false);
+  const [actionError, setActionError] = useState("");
 
   const [message, setMessage] = useState("");
   const [replyTo, setReplyTo] =
@@ -75,24 +90,37 @@ export function DangerPointDetailsModal({
     (comment) => !comment.parentId,
   );
 
-  function sendComment() {
-    if (!report || !message.trim()) return;
+  async function sendComment() {
+    if (!report || !message.trim() || sending) return;
 
-    onAddComment(
-      report.id,
-      message.trim(),
-      replyTo?.id,
-    );
+    setSending(true);
+    setActionError("");
 
-    if (replyTo) {
-      setExpanded((previous) => ({
-        ...previous,
-        [replyTo.id]: true,
-      }));
+    try {
+      await onAddComment(
+        report.id,
+        message.trim(),
+        replyTo?.id,
+      );
+
+      if (replyTo) {
+        setExpanded((previous) => ({
+          ...previous,
+          [replyTo.id]: true,
+        }));
+      }
+
+      setMessage("");
+      setReplyTo(null);
+    } catch (failure) {
+      setActionError(
+        failure instanceof Error
+          ? failure.message
+          : "Não foi possível enviar o comentário.",
+      );
+    } finally {
+      setSending(false);
     }
-
-    setMessage("");
-    setReplyTo(null);
   }
 
   return (
@@ -224,17 +252,20 @@ export function DangerPointDetailsModal({
 
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={
-                  report.confirmedByMe
-                    ? "Desfazer minha confirmação"
-                    : "Confirmar este relato"
-                }
-                accessibilityState={{
-                  selected: report.confirmedByMe,
+                disabled={report.confirmedByMe}
+                onPress={async () => {
+                  setActionError("");
+
+                  try {
+                    await onToggleConfirmation(report.id);
+                  } catch (failure) {
+                    setActionError(
+                      failure instanceof Error
+                        ? failure.message
+                        : "Não foi possível confirmar.",
+                    );
+                  }
                 }}
-                onPress={() =>
-                  onToggleConfirmation(report.id)
-                }
                 style={s.confirmation}
               >
                 <Ionicons
@@ -248,13 +279,8 @@ export function DangerPointDetailsModal({
                 />
 
                 <Text style={s.metaText}>
-                  {report.confirmations_count}{" "}
-                  {report.confirmations_count === 1
-                    ? "confirmação"
-                    : "confirmações"}
-                  {report.confirmedByMe
-                    ? " · você confirmou"
-                    : ""}
+                  {report.confirmations_count ?? "…"} confirmações
+                  {report.confirmedByMe ? " · você confirmou" : ""}
                 </Text>
               </Pressable>
 
@@ -398,6 +424,26 @@ export function DangerPointDetailsModal({
               })}
             </ScrollView>
 
+            {!!commentsError && (
+              <Text style={{ color: "#9F1239" }}>
+                {commentsError}
+              </Text>
+            )}
+
+            {hasMoreComments && (
+              <Pressable
+                disabled={loadingMore}
+                onPress={loadMoreComments}
+                style={{ minHeight: 44, justifyContent: "center" }}
+              >
+                <Text style={{ color: "#8554BB" }}>
+                  {loadingMore
+                    ? "Carregando…"
+                    : "Carregar mais comentários"}
+                </Text>
+              </Pressable>
+            )}
+
             <View
               style={[
                 s.footer,
@@ -435,6 +481,15 @@ export function DangerPointDetailsModal({
                 </View>
               )}
 
+              {!!actionError && (
+                <Text
+                  accessibilityRole="alert"
+                  style={{ color: "#9F1239", marginBottom: 8 }}
+                >
+                  {actionError}
+                </Text>
+              )}
+
               <View style={s.composer}>
                 <TextInput
                   accessibilityLabel={
@@ -462,7 +517,7 @@ export function DangerPointDetailsModal({
                       ? "Enviar resposta"
                       : "Enviar comentário"
                   }
-                  disabled={!message.trim()}
+                  disabled={!message.trim() || sending}
                   onPress={sendComment}
                   style={({ pressed }) => [
                     s.send,

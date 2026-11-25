@@ -66,6 +66,10 @@ import {
   isValidCoordinates,
   type DangerReport,
 } from "../src/features/reports/reportModel";
+import { ApiFeedback } from "@/components/ui/ApiFeedback";
+import { useRiskZones } from "@/features/map/useRiskZones";
+import { ZoneIncidentsModal } from "@/features/reports/ZoneIncidentsModal";
+import type { Schemas } from "@/services/api/contracts";
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -108,6 +112,9 @@ export default function HomeScreen() {
     currentCoords,
     hasUserLocation: Boolean(location),
     authorName: user?.nickname || "Você",
+    identityKey: isLoggedIn
+      ? user?.email || user?.nickname || "authenticated"
+      : null,
   });
 
   const routeRequestRef = useRef(0);
@@ -490,6 +497,18 @@ export default function HomeScreen() {
     haversineDistanceM,
   ]);
 
+  const apiZones = useRiskZones();
+
+  const [selectedZone, setSelectedZone] = useState<
+    Schemas["ZoneFeature"] | null
+  >(null);
+
+  useEffect(() => {
+    if (reportFlow.revision > 0) {
+      apiZones.refresh();
+    }
+  }, [reportFlow.revision, apiZones.refresh]);
+
   return (
     <SafeAreaView
       style={[
@@ -528,6 +547,9 @@ export default function HomeScreen() {
             reports={reportFlow.reports}
             onMapPress={handleMapClick}
             onSelectReport={reportFlow.selectReport}
+            zoneFeatures={apiZones.features}
+            onBoundsChange={apiZones.onBoundsChange}
+            onSelectZone={setSelectedZone}
           />
         </View>
 
@@ -658,21 +680,6 @@ export default function HomeScreen() {
                   {reportFlow.notice}
                 </Text>
               </View>
-
-              <TouchableOpacity
-                accessibilityRole="button"
-                onPress={reportFlow.loadExamples}
-                style={styles.reportTestButton}
-              >
-                <Text
-                  style={[
-                    styles.reportTestText,
-                    { color: colors.primaryPurple },
-                  ]}
-                >
-                  Carregar relatos fictícios de teste
-                </Text>
-              </TouchableOpacity>
             </View>
           )}
 
@@ -882,10 +889,27 @@ export default function HomeScreen() {
         )}
 
         <DangerPointDetailsModal
+          key={reportFlow.selectedReport?.id ?? "closed"}
           report={reportFlow.selectedReport}
           onClose={reportFlow.closeDetails}
           onToggleConfirmation={reportFlow.toggleConfirmation}
           onAddComment={reportFlow.addComment}
+          hasMoreComments={reportFlow.hasMoreComments}
+          loadingMore={reportFlow.loadingMore}
+          commentsError={reportFlow.commentsError}
+          loadMoreComments={reportFlow.loadMoreComments}
+        />
+
+        <ApiFeedback
+          loading={reportFlow.loading}
+          error={reportFlow.error}
+          onRetry={() => {
+            if (reportFlow.selectedReport) {
+              void reportFlow.selectReportById(
+                reportFlow.selectedReport.id,
+              );
+            }
+          }}
         />
 
         {!isRouteMode && selectedAddressInfo && (
@@ -1051,6 +1075,17 @@ export default function HomeScreen() {
           initialQuery={searchQuery}
         />
       </View>
+      {selectedZone && (
+        <ZoneIncidentsModal
+          key={selectedZone.id}
+          zone={selectedZone}
+          onClose={() => setSelectedZone(null)}
+          onOpenReport={(id) => {
+            setSelectedZone(null);
+            void reportFlow.selectReportById(id);
+          }}
+        />
+      )}
 
       <BottomNavigation
         onTabPress={(tab) => router.push(tab)}

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import {
   View,
   Text,
@@ -11,8 +11,9 @@ import {
 import { useRouter } from "expo-router";
 import { theme, useAppTheme } from "../src/theme";
 import { Button, Input, LinkText } from "../src/components/ui";
-import { useAuth } from "../src/features/auth/AuthContext";
 
+import { useAuthActions } from "../src/features/auth/useAuthActions";
+import { normalizeApiError } from "../src/services/api/client";
 /**
  * Tela de Cadastro ("Criar conta") - RF01.
  * 100% Responsiva e compatível com tema claro e escuro.
@@ -20,7 +21,10 @@ import { useAuth } from "../src/features/auth/AuthContext";
 export default function RegisterScreen() {
   const router = useRouter();
   const { colors } = useAppTheme();
-  const { login } = useAuth();
+  const { signUp } = useAuthActions();
+  const busyRef = useRef(false);
+
+  const [formError, setFormError] = useState("");
 
   const [nickname, setNickname] = useState("");
   const [phone, setPhone] = useState("");
@@ -48,20 +52,15 @@ export default function RegisterScreen() {
     setEmailError("");
     setPasswordError("");
 
+    console.log("Nickname: ", nickname);
+    console.log("Email: ", email);
+    console.log("Password: ", password);
+
     if (!nickname.trim()) {
       setNicknameError("Informe um apelido");
       isValid = false;
     } else if (nickname.trim().length < 3) {
       setNicknameError("O apelido deve ter pelo menos 3 caracteres");
-      isValid = false;
-    }
-
-    const rawPhone = phone.replace(/\D/g, "");
-    if (!rawPhone) {
-      setPhoneError("Informe seu telefone");
-      isValid = false;
-    } else if (rawPhone.length < 10) {
-      setPhoneError("Telefone inválido");
       isValid = false;
     }
 
@@ -91,18 +90,56 @@ export default function RegisterScreen() {
       }
     }
 
+    if (nickname.trim().length > 50) {
+      setNicknameError("O apelido deve ter até 50 caracteres.");
+      isValid = false;
+    }
+
+    if (email.trim().length > 254) {
+      setEmailError("O e-mail deve ter até 254 caracteres.");
+      isValid = false;
+    }
+
+    if (password.length > 128) {
+      setPasswordError("A senha deve ter até 128 caracteres.");
+      isValid = false;
+    }
+
     return isValid;
   };
 
   const handleRegister = async () => {
-    if (!validateForm()) return;
+    if (busyRef.current || !validateForm()) return;
 
+    busyRef.current = true;
     setLoading(true);
-    setTimeout(() => {
+    setFormError("");
+
+    try {
+      await signUp({
+        username: nickname.trim(),
+        email: email.trim(),
+        password,
+        emergency_contacts: [
+          {
+            name: "Polícia Militar",
+            phone: "19996980138",
+            is_primary: true,
+          },
+        ],
+      });
+
+      // O cadastro cria a conta, mas não retorna tokens.
+      router.replace({
+        pathname: "/login",
+        params: { registered: "1" },
+      });
+    } catch (error) {
+      setFormError(normalizeApiError(error).message);
+    } finally {
+      busyRef.current = false;
       setLoading(false);
-      login(nickname.trim(), email.trim());
-      router.push("/");
-    }, 200);
+    }
   };
 
   return (
@@ -121,6 +158,14 @@ export default function RegisterScreen() {
           </View>
 
           <View style={styles.formContainer}>
+            {!!formError && (
+              <Text
+                accessibilityRole="alert"
+                style={{ color: colors.danger, marginBottom: 16 }}
+              >
+                {formError}
+              </Text>
+            )}
             <Input
               placeholder="Apelido"
               value={nickname}
@@ -133,17 +178,22 @@ export default function RegisterScreen() {
               error={nicknameError}
             />
 
-            <Input
-              placeholder="Telefone"
-              value={phone}
-              onChangeText={(text) => {
-                setPhone(formatPhone(text));
-                if (phoneError) setPhoneError("");
+            <View
+              style={{
+                padding: 16,
+                borderRadius: 12,
+                backgroundColor: colors.inputBackground,
+                marginBottom: 16,
               }}
-              keyboardType="phone-pad"
-              maxLength={15}
-              error={phoneError}
-            />
+            >
+              <Text style={{ color: colors.text, fontWeight: "600" }}>
+                Contato de emergência inicial
+              </Text>
+
+              <Text style={{ color: colors.textMuted, marginTop: 6 }}>
+                Polícia Militar — 190
+              </Text>
+            </View>
 
             <Input
               placeholder="E-mail"

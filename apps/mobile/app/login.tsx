@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import {
   View,
   Text,
@@ -8,11 +8,12 @@ import {
   ScrollView,
   Alert,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { theme, useAppTheme } from "../src/theme";
 import { Button, Input, Checkbox, LinkText } from "../src/components/ui";
-import { useAuth } from "../src/features/auth/AuthContext";
 
+import { useAuthActions } from "../src/features/auth/useAuthActions";
+import { normalizeApiError } from "../src/services/api/client";
 /**
  * Tela de Login ("Bem-vinda!") - RF02.
  * 100% Responsiva para qualquer tamanho de tela ou celular.
@@ -20,7 +21,14 @@ import { useAuth } from "../src/features/auth/AuthContext";
 export default function LoginScreen() {
   const router = useRouter();
   const { colors } = useAppTheme();
-  const { login } = useAuth();
+  const { signIn, forgotPassword } = useAuthActions();
+
+const params = useLocalSearchParams<{ registered?: string }>();
+const busyRef = useRef(false);
+
+const [formError, setFormError] = useState("");
+const [message, setMessage] = useState("");
+const [recovering, setRecovering] = useState(false);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -53,18 +61,53 @@ export default function LoginScreen() {
   };
 
   const handleLogin = async () => {
-    if (!validateForm()) return;
+    if (busyRef.current || !validateForm()) return;
 
+    busyRef.current = true;
     setLoading(true);
-    setTimeout(() => {
+    setFormError("");
+    setMessage("");
+
+    try {
+      await signIn(email.trim(), password);
+
+      // Só navega depois de autenticar e salvar os tokens.
+      router.replace("/");
+    } catch (error) {
+      setFormError(normalizeApiError(error).message);
+    } finally {
+      busyRef.current = false;
       setLoading(false);
-      login("Maria", email.trim() || "maria.lopez@gmail.com");
-      router.push("/");
-    }, 200);
+    }
   };
 
-  const handleForgotPassword = () => {
-    Alert.alert("Recuperar Senha", "Instruções serão enviadas para o seu e-mail.");
+  const handleForgotPassword = async () => {
+    if (busyRef.current) return;
+
+    const cleanEmail = email.trim();
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      setEmailError("Informe um e-mail válido para recuperar a senha.");
+      return;
+    }
+
+    busyRef.current = true;
+    setRecovering(true);
+    setFormError("");
+    setMessage("");
+
+    try {
+      await forgotPassword(cleanEmail);
+
+      setMessage(
+        "Se houver uma conta para este e-mail, você receberá as instruções de recuperação.",
+      );
+    } catch (error) {
+      setFormError(normalizeApiError(error).message);
+    } finally {
+      busyRef.current = false;
+      setRecovering(false);
+    }
   };
 
   return (
@@ -83,6 +126,29 @@ export default function LoginScreen() {
           </View>
 
           <View style={styles.formContainer}>
+            {params.registered === "1" && (
+              <Text style={{ color: colors.text, marginBottom: 16 }}>
+                Conta criada! Entre com seu e-mail e senha.
+              </Text>
+            )}
+
+            {!!formError && (
+              <Text
+                accessibilityRole="alert"
+                style={{ color: colors.danger, marginBottom: 16 }}
+              >
+                {formError}
+              </Text>
+            )}
+
+            {!!message && (
+              <Text
+                accessibilityRole="alert"
+                style={{ color: colors.text, marginBottom: 16 }}
+              >
+                {message}
+              </Text>
+            )}
             <Input
               placeholder="E-mail"
               value={email}
@@ -110,7 +176,7 @@ export default function LoginScreen() {
 
             <View style={styles.optionsRow}>
               <LinkText
-                text="Esqueceu a senha?"
+                text={recovering ? "Enviando instruções…" : "Esqueceu a senha?"}
                 underline={false}
                 align="left"
                 textStyle={[styles.forgotPasswordText, { color: colors.textMuted }]}

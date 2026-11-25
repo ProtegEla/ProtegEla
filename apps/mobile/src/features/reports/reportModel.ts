@@ -1,42 +1,16 @@
+import { Detail } from "../../services/api/reportAdapters";
 import type { Coordinates } from "../map/types";
+export type {
+  Detail as DangerReport,
+  Comment as ReportComment,
+  ReportFormData as CreateReportPayload,
+} from "../../services/api/reportAdapters";
 
 export interface RiskMapReport {
   category: string;
   description?: string | null;
   location: Coordinates;
-  confirmations_count: number;
-}
-
-export interface ReportComment {
-  id: string;
-  author: string;
-  text: string;
-  createdAt: string;
-  parentId?: string;
-  isMine?: boolean;
-}
-
-export interface DangerReport extends RiskMapReport {
-  id: string;
-  address: string;
-  addressDetail: string;
-  period: string;
-  isAnonymous: boolean;
-  author: string;
-  createdAt: string;
-  confirmedByMe: boolean;
-  comments: ReportComment[];
-}
-
-export interface CreateReportPayload {
-  category: string;
-  description: string;
-  addressDetail: string;
-  period: string;
-  isAnonymous: boolean;
-
-  location: Coordinates;
-  address: string;
+  confirmations_count?: number | null;
 }
 
 export const PERIOD_LABELS: Record<string, string> = {
@@ -128,7 +102,7 @@ export const DEMO_CENTER: Coordinates = {
 };
 
 // Relatos fictícios para testar a integração no mapa.
-export function createDemoReports(): DangerReport[] {
+export function createDemoReports(): Detail[] {
   const now = Date.now();
 
   return [

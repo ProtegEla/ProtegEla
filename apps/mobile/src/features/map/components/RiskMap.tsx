@@ -27,6 +27,9 @@ import {
   createSelectedLocationIcon,
 } from "../../reports/mapMarkerIcons";
 
+import type { Schemas } from "../../../services/api/contracts";
+import type { Bounds } from "../../../services/api/reports";
+
 export type MapTileStyle =
   | "clean"
   | "clean_dark"
@@ -68,6 +71,10 @@ export interface RiskMapProps<
 
   interactive?: boolean;
   cameraRevision?: number;
+
+  zoneFeatures?: Schemas["ZoneFeature"][];
+  onSelectZone?: (zone: Schemas["ZoneFeature"]) => void;
+  onBoundsChange?: (bounds: Bounds) => void;
 }
 
 const TILE_PROVIDERS: Record<
@@ -244,6 +251,9 @@ export function RiskMap<
   onMapClick,
   interactive = true,
   cameraRevision = 0,
+  zoneFeatures = [],
+  onSelectZone,
+  onBoundsChange,
 }: RiskMapProps<TReport>) {
   const { colors, isDark } = useAppTheme();
 
@@ -271,6 +281,20 @@ export function RiskMap<
   });
 
   const initialViewRef = useRef({ center, zoom });
+
+  const apiZonesRef = useRef<any>(null);
+
+  const apiCallbacksRef = useRef({
+    onSelectZone,
+    onBoundsChange,
+  });
+
+  useEffect(() => {
+    apiCallbacksRef.current = {
+      onSelectZone,
+      onBoundsChange,
+    };
+  }, [onSelectZone, onBoundsChange]);
 
   useEffect(() => {
     callbacksRef.current = {
@@ -324,6 +348,7 @@ export function RiskMap<
         markersRef.current = L.layerGroup().addTo(ownedMap);
         zonesRef.current = L.layerGroup().addTo(ownedMap);
         routesRef.current = L.layerGroup().addTo(ownedMap);
+        apiZonesRef.current = L.layerGroup().addTo(ownedMap);
 
         const routePane =
           ownedMap.createPane("report-routes");
@@ -386,6 +411,7 @@ export function RiskMap<
           fittedRouteRef.current = null;
           tileRef.current = null;
           leafletRef.current = null;
+          apiZonesRef.current = null;
         }
       }
     };
@@ -805,6 +831,106 @@ export function RiskMap<
       </View>
     );
   }
+
+  useEffect(() => {
+    if (!ready || !mapRef.current) return;
+
+    const map = mapRef.current;
+
+    const publishBounds = () => {
+      const bounds = map.getBounds();
+
+      apiCallbacksRef.current.onBoundsChange?.({
+        west: bounds.getWest(),
+        south: bounds.getSouth(),
+        east: bounds.getEast(),
+        north: bounds.getNorth(),
+      });
+    };
+
+    map.on("moveend", publishBounds);
+    publishBounds();
+
+    return () => {
+      map.off("moveend", publishBounds);
+    };
+  }, [ready]);
+
+  useEffect(() => {
+    if (!ready || !apiZonesRef.current) return;
+
+    const L = leafletRef.current;
+    const layer = apiZonesRef.current;
+
+    layer.clearLayers();
+
+    for (const zone of zoneFeatures) {
+      const feature = {
+        ...zone,
+        type: "Feature",
+        geometry: {
+          ...zone.geometry,
+          type: zone.geometry.type ?? "Point",
+        },
+      };
+
+      L.geoJSON(feature, {
+        style: {
+          color: "#8055B5",
+          fillColor: "#8055B5",
+          weight: 2,
+          fillOpacity: 0.12,
+          interactive,
+          bubblingMouseEvents: false,
+        },
+
+        pointToLayer: (
+          _feature: unknown,
+          point: unknown,
+        ) =>
+          L.circleMarker(point, {
+            radius: 18,
+            color: "#8055B5",
+            fillOpacity: 0.12,
+            interactive,
+            bubblingMouseEvents: false,
+          }),
+
+        onEachFeature: (
+          _feature: unknown,
+          shape: any,
+        ) => {
+          shape.on("click", () => {
+            apiCallbacksRef.current.onSelectZone?.(zone);
+          });
+        },
+      }).addTo(layer);
+
+      const [longitude, latitude] =
+        zone.properties.marker_location.coordinates;
+
+      const categories = zone.properties.categories;
+
+      L.marker([latitude, longitude], {
+        icon: createReportMarkerIcon(
+          L,
+          categories.length === 1
+            ? categories[0]
+            : "Ocorrências",
+        ),
+        title:
+          `${zone.properties.incidents_count} ` +
+          "ocorrências mapeadas",
+        interactive,
+        keyboard: interactive,
+        bubblingMouseEvents: false,
+      })
+        .on("click", () => {
+          apiCallbacksRef.current.onSelectZone?.(zone);
+        })
+        .addTo(layer);
+    }
+  }, [ready, zoneFeatures, interactive]);
 
   return (
     <View style={s.container}>

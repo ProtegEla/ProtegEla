@@ -39,6 +39,7 @@ import {
   isValidCoordinates,
   type CreateReportPayload,
 } from "../reportModel";
+import { localToday } from "../../../services/api/reportAdapters";
 
 export interface CreateReportData extends CreateReportPayload {
   address: string;
@@ -92,6 +93,12 @@ export function CreateReportBottomSheet({
   mapStyle = "streets",
 }: CreateReportBottomSheetProps) {
   const { isDark } = useAppTheme();
+
+  const [incidentDate, setIncidentDate] =
+  useState(localToday);
+
+  const [incidentTime, setIncidentTime] =
+    useState("");
 
   const getInitialLocation = (): Coordinates => ({
     ...(validLocation(initialLocation)
@@ -184,6 +191,9 @@ export function CreateReportBottomSheet({
 
       invalidateSearch();
 
+      setIncidentDate(localToday());
+      setIncidentTime("");
+
       setSelectedLocation(location);
       setPreviewCenter(location);
       setSelectedAddress(currentAddress);
@@ -208,6 +218,7 @@ export function CreateReportBottomSheet({
     if (!visible) {
       invalidateSearch();
     }
+    
 
     wasVisibleRef.current = visible;
   }, [
@@ -456,12 +467,9 @@ export function CreateReportBottomSheet({
 
     const normalizedDescription = description.trim();
 
-    if (
-      normalizedDescription.length < 10 ||
-      normalizedDescription.length > 1000
-    ) {
+    if (description.trim().length > 1000) {
       setSubmitError(
-        "Descreva o ocorrido com 10 a 1.000 caracteres.",
+        "A descrição deve ter no máximo 1.000 caracteres.",
       );
       return;
     }
@@ -481,6 +489,8 @@ export function CreateReportBottomSheet({
         ...selectedLocation,
         address,
       },
+      incidentDate,
+      incidentTime
     };
 
     const sessionId = sessionIdRef.current;
@@ -805,6 +815,32 @@ export function CreateReportBottomSheet({
             multiline
             maxLength={1000}
             textAlignVertical="top"
+          />
+
+          <Text style={s.label}>Data do incidente</Text>
+
+          <TextInput
+            accessibilityLabel="Data do incidente"
+            style={s.input}
+            value={incidentDate}
+            onChangeText={setIncidentDate}
+            placeholder="AAAA-MM-DD"
+            placeholderTextColor="#8C7CA8"
+            maxLength={10}
+            editable={!isSubmitting}
+          />
+
+          <Text style={s.label}>Horário (opcional)</Text>
+
+          <TextInput
+            accessibilityLabel="Horário do incidente"
+            style={s.input}
+            value={incidentTime}
+            onChangeText={setIncidentTime}
+            placeholder="HH:mm"
+            placeholderTextColor="#8C7CA8"
+            maxLength={5}
+            editable={!isSubmitting}
           />
 
           <Text style={s.label}>Período</Text>

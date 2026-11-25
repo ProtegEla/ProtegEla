@@ -1,326 +1,562 @@
 import { useEffect, useRef, useState } from "react";
 
-import type { Coordinates } from "../map/types";
+import {
+  ApiError,
+  normalizeApiError,
+} from "../../services/api/client";
 
 import {
-  coordinatesLabel,
-  createDemoReports,
-  isValidCoordinates,
-  type CreateReportPayload,
-  type DangerReport,
-} from "./reportModel";
+  commentsService,
+  reportsService,
+} from "../../services/api/reports";
 
-type CreationSession = {
-  id: string;
-  location: Coordinates;
-  address: string;
-};
+import {
+  adaptComment,
+  adaptReport,
+  buildReportPayload,
+  type Comment,
+  type Coordinates,
+  type Detail,
+  type ReportFormData,
+} from "../../services/api/reportAdapters";
 
 type Options = {
   currentCoords: Coordinates;
   hasUserLocation: boolean;
   authorName?: string;
+  identityKey?: string | null;
 };
+
+const mergeComments = (
+  previous: Comment[],
+  incoming: Comment[],
+) =>
+  [
+    ...new Map(
+      [...previous, ...incoming].map((item) => [
+        item.id,
+        item,
+      ]),
+    ).values(),
+  ];
 
 export function useHomeReports({
   currentCoords,
   hasUserLocation,
-  authorName = "Você",
+  identityKey = null,
 }: Options) {
-  const [reports, setReports] = useState<DangerReport[]>([]);
-
-  const [selectedId, setSelectedId] = useState<
-    string | null
-  >(null);
-
+  const [reports, setReports] = useState<Detail[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedLocation, setSelectedLocation] =
     useState<Coordinates | null>(null);
 
-  const [creationSession, setCreationSession] =
-    useState<CreationSession | null>(null);
+  const [mapCenter, setMapCenter] = useState(currentCoords);
+  const [cameraRevision, setCameraRevision] = useState(0);
+
+  const [creationSession, setCreationSession] = useState<{
+    id: string;
+    location: Coordinates;
+    address: string;
+  } | null>(null);
 
   const [notice, setNotice] = useState(
-    "Toque em uma área vazia do mapa para escolher o local de um relato.",
+    "Selecione o local do incidente no mapa.",
   );
 
-  const [mapCenter, setMapCenter] =
-  useState<Coordinates>(currentCoords);
+  const [error, setError] = useState("");
+  const [commentsError, setCommentsError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMoreComments, setHasMoreComments] = useState(false);
+  const [revision, setRevision] = useState(0);
 
-  const [cameraRevision, setCameraRevision] =
-    useState(0);
+  const generation = useRef(0);
+  const identityEpoch = useRef(0);
+  const pageRef = useRef(1);
+  const selectedRef = useRef<string | null>(null);
+
+  const confirmed = useRef(new Set<string>());
+  const abused = useRef(new Set<string>());
+  const ownComments = useRef(new Set<string>());
+
+  const confirmBusy = useRef(new Set<string>());
+  const abuseBusy = useRef(new Set<string>());
+  const moreBusy = useRef(false);
+
+  const operationSequence = useRef(0);
+  const commentOperation = useRef<number | null>(null);
+
+  useEffect(
+    () => () => {
+      generation.current += 1;
+    },
+    [],
+  );
 
   useEffect(() => {
-    setMapCenter({
-      latitude: currentCoords.latitude,
-      longitude: currentCoords.longitude,
-    });
-  }, [
-    currentCoords.latitude,
-    currentCoords.longitude,
-  ]);
+    identityEpoch.current += 1;
 
-  function recenterMap() {
-    setMapCenter({ ...currentCoords });
-    setCameraRevision((previous) => previous + 1);
-  }
+    confirmed.current.clear();
+    abused.current.clear();
+    ownComments.current.clear();
+    commentOperation.current = null;
 
-  const sequence = useRef(0);
+    closeDetails();
+    setCreationSession(null);
 
-  function nextId() {
-    sequence.current += 1;
-
-    return `local-${Date.now()}-${sequence.current}`;
-  }
-
-  // Deriva da lista para refletir imediatamente alterações.
-  const selectedReport =
-    reports.find((report) => report.id === selectedId) ??
-    null;
-
-  function selectLocation(coordinates: Coordinates) {
-    if (!isValidCoordinates(coordinates)) return;
-
-    setSelectedLocation({ ...coordinates });
-
-    setNotice(
-      `Local selecionado: ${coordinatesLabel(coordinates)}`,
+    setReports((previous) =>
+      previous.map((report) => ({
+        ...report,
+        confirmedByMe: false,
+        abuseRegistered: false,
+        comments: report.comments.map((comment) => ({
+          ...comment,
+          isMine: false,
+        })),
+      })),
     );
-  }
+  }, [identityKey]);
 
-  function selectReport(report: DangerReport) {
-    setSelectedId(report.id);
+  useEffect(() => {
+    setMapCenter({ ...currentCoords });
+  }, [currentCoords.latitude, currentCoords.longitude]);
+
+  function upsert(report: Detail) {
+    setReports((previous) => {
+      const next = {
+        ...report,
+        confirmedByMe: confirmed.current.has(report.id),
+        abuseRegistered: abused.current.has(report.id),
+      };
+
+      if (!previous.some((item) => item.id === report.id)) {
+        return [...previous, next];
+      }
+
+      return previous.map((item) =>
+        item.id === report.id
+          ? {
+              ...next,
+              comments: mergeComments(
+                item.comments,
+                next.comments,
+              ),
+            }
+          : item,
+      );
+    });
   }
 
   function closeDetails() {
+    generation.current += 1;
+    selectedRef.current = null;
+    moreBusy.current = false;
+
     setSelectedId(null);
+    setLoading(false);
+    setLoadingMore(false);
+  }
+
+  async function selectReportById(id: string) {
+    const request = ++generation.current;
+    const knownOwnComments = new Set(ownComments.current);
+
+    selectedRef.current = id;
+    pageRef.current = 1;
+
+    setSelectedId(id);
+    setLoading(true);
+    setError("");
+    setCommentsError("");
+    setHasMoreComments(false);
+
+    try {
+      const detail = await reportsService.get(id);
+
+      if (request !== generation.current) return;
+
+      upsert(adaptReport(detail));
+
+      try {
+        const page = await commentsService.list(id);
+
+        if (request !== generation.current) return;
+
+        setReports((previous) =>
+          previous.map((item) =>
+            item.id === id
+              ? {
+                  ...item,
+                  comments: mergeComments(
+                    item.comments.filter(
+                      (comment) =>
+                        ownComments.current.has(comment.id) &&
+                        !knownOwnComments.has(comment.id),
+                    ),
+                    page.data.map((value) =>
+                      adaptComment(
+                        value,
+                        ownComments.current.has(value.id),
+                      ),
+                    ),
+                  ),
+                }
+              : item,
+          ),
+        );
+
+        setHasMoreComments(
+          page.meta.page * page.meta.page_size <
+            page.meta.total_records,
+        );
+      } catch (failure) {
+        if (request === generation.current) {
+          setCommentsError(
+            normalizeApiError(failure).message,
+          );
+        }
+      }
+    } catch (failure) {
+      if (request !== generation.current) return;
+
+      const problem = normalizeApiError(failure);
+      setError(problem.message);
+
+      if (problem.status === 404) {
+        setReports((previous) =>
+          previous.filter((item) => item.id !== id),
+        );
+
+        closeDetails();
+        setRevision((value) => value + 1);
+      }
+    } finally {
+      if (request === generation.current) {
+        setLoading(false);
+      }
+    }
+  }
+
+  async function loadMoreComments() {
+    const id = selectedRef.current;
+
+    if (!id || moreBusy.current || !hasMoreComments) return;
+
+    moreBusy.current = true;
+    const request = generation.current;
+    setLoadingMore(true);
+
+    try {
+      const page = await commentsService.list(
+        id,
+        pageRef.current + 1,
+      );
+
+      if (request !== generation.current) return;
+
+      pageRef.current = page.meta.page;
+
+      setReports((previous) =>
+        previous.map((item) =>
+          item.id === id
+            ? {
+                ...item,
+                comments: mergeComments(
+                  item.comments,
+                  page.data.map((value) =>
+                    adaptComment(
+                      value,
+                      ownComments.current.has(value.id),
+                    ),
+                  ),
+                ),
+              }
+            : item,
+        ),
+      );
+
+      setHasMoreComments(
+        page.meta.page * page.meta.page_size <
+          page.meta.total_records,
+      );
+
+      setCommentsError("");
+    } catch (failure) {
+      if (request === generation.current) {
+        setCommentsError(
+          normalizeApiError(failure).message,
+        );
+      }
+    } finally {
+      if (request === generation.current) {
+        moreBusy.current = false;
+        setLoadingMore(false);
+      }
+    }
+  }
+
+  function selectLocation(coordinates: Coordinates) {
+    setSelectedLocation({ ...coordinates });
+
+    setNotice(
+      `Local selecionado: ${coordinates.latitude.toFixed(5)}, ${coordinates.longitude.toFixed(5)}`,
+    );
   }
 
   function openCreateReport() {
-    const coordinates = selectedLocation ?? currentCoords;
+    const location = {
+      ...(selectedLocation ?? currentCoords),
+    };
 
-    if (!isValidCoordinates(coordinates)) {
-      setNotice(
-        "Não foi possível identificar o local. Selecione um ponto no mapa.",
-      );
-      return;
-    }
-
-    const label = selectedLocation
-      ? "Local selecionado"
-      : hasUserLocation
-        ? "Sua localização"
-        : "Centro inicial do mapa";
-
-    setSelectedId(null);
-
-    // Captura o local ao abrir o formulário.
-    // Atualizações do GPS não alteram este rascunho.
     setCreationSession({
-      id: nextId(),
-      location: { ...coordinates },
-      address: `${label} · ${coordinatesLabel(coordinates)}`,
+      id: `draft-${Date.now()}`,
+      location,
+      address:
+        `${
+          selectedLocation
+            ? "Local selecionado"
+            : hasUserLocation
+              ? "Sua localização"
+              : "Centro inicial do mapa"
+        } · ${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}`,
     });
   }
 
-  function closeCreateReport() {
-    setCreationSession(null);
-  }
+  async function createReport(form: ReportFormData) {
+    const epoch = identityEpoch.current;
 
-  function createReport(data: CreateReportPayload) {
-    if (!creationSession) {
-      throw new Error(
-        "Abra novamente o formulário para publicar.",
-      );
-    }
-
-    if (!isValidCoordinates(data.location)) {
-      throw new Error(
-        "Selecione uma localização válida no mapa.",
-      );
-    }
-
-    const description = data.description.trim();
-
-    if (description.length < 10) {
-      throw new Error(
-        "Descreva o ocorrido com pelo menos 10 caracteres.",
-      );
-    }
-
-    if (description.length > 1000) {
-      throw new Error(
-        "A descrição deve ter no máximo 1.000 caracteres.",
-      );
-    }
-
-    const location = { ...data.location };
-
-    const report: DangerReport = {
-      id: nextId(),
-      category: data.category,
-      description,
-
-      // Agora usa o endereço escolhido DENTRO do formulário.
-      location,
-      address:
-        data.address.trim() ||
-        `Local no mapa · ${coordinatesLabel(location)}`,
-
-      addressDetail: data.addressDetail.trim(),
-      period: data.period,
-
-      isAnonymous: data.isAnonymous,
-      author: data.isAnonymous
-        ? "Anônima"
-        : authorName,
-
-      createdAt: new Date().toISOString(),
-      confirmations_count: 0,
-      confirmedByMe: false,
-      comments: [],
-    };
-
-    setReports((previous) => [...previous, report]);
-
-    setSelectedLocation(location);
-    setMapCenter(location);
-    setCameraRevision((previous) => previous + 1);
-
-    setNotice(
-      "Relato publicado no local selecionado.",
+    const created = await reportsService.create(
+      buildReportPayload(form),
     );
-  }
 
-  function toggleConfirmation(id: string) {
-    setReports((previous) =>
-      previous.map((report) => {
-        if (report.id !== id) return report;
+    if (epoch !== identityEpoch.current) return;
 
-        return {
-          ...report,
-          confirmedByMe: !report.confirmedByMe,
-          confirmations_count: Math.max(
-            0,
-            report.confirmations_count +
-              (report.confirmedByMe ? -1 : 1),
-          ),
-        };
-      }),
-    );
-  }
+    upsert(adaptReport(created));
 
-  function addComment(
-    reportId: string,
-    text: string,
-    parentId?: string,
-  ) {
-    const normalized = text.trim();
+    setMapCenter({ ...created.location });
+    setSelectedLocation({ ...created.location });
 
-    if (!normalized) return;
+    setCameraRevision((value) => value + 1);
+    setRevision((value) => value + 1);
+    setNotice("Relato publicado.");
 
-    const comment = {
-      id: nextId(),
-      author: authorName,
-      text: normalized,
-      createdAt: new Date().toISOString(),
-      parentId,
-      isMine: true,
-    };
-
-    setReports((previous) =>
-      previous.map((report) => {
-        if (report.id !== reportId) return report;
-
-        // Respostas precisam apontar para um comentário
-        // principal pertencente ao mesmo relato.
-        if (
-          parentId &&
-          !report.comments.some(
-            (item) =>
-              item.id === parentId && !item.parentId,
-          )
-        ) {
-          return report;
+    // Publicação já foi concluída. Falha nesta leitura não deve
+    // provocar uma nova tentativa de POST.
+    void reportsService
+      .get(created.id)
+      .then((value) => {
+        if (epoch === identityEpoch.current) {
+          upsert(adaptReport(value));
         }
-
-        return {
-          ...report,
-          comments: [...report.comments, comment],
-        };
-      }),
-    );
+      })
+      .catch(() => {});
   }
 
-  function loadExamples() {
-    const origin = selectedLocation ?? currentCoords;
+  async function confirmReport(id: string) {
+    const epoch = identityEpoch.current;
+    const key = `${epoch}:${id}`;
 
-    if (!isValidCoordinates(origin)) {
-      setNotice(
-        "Selecione um local válido para carregar os exemplos.",
-      );
+    if (
+      confirmed.current.has(id) ||
+      confirmBusy.current.has(key)
+    ) {
       return;
     }
 
-    const examples = createDemoReports().map(
-      (report, index): DangerReport => ({
-        ...report,
-        address: `Ponto de teste ${index + 1}`,
-        location: {
-          latitude: Math.max(
-            -85,
-            Math.min(
-              85,
-              origin.latitude +
-                (index === 0 ? 0.0007 : -0.0007),
-            ),
-          ),
-          longitude:
-            ((((origin.longitude +
-              (index === 0 ? -0.0007 : 0.0007)) +
-              180) %
-              360 +
-              360) %
-              360) -
-            180,
-        },
-      }),
-    );
+    confirmBusy.current.add(key);
 
-    // Substitui apenas exemplos antigos.
-    // Preserva os relatos que você criou.
-    setReports((previous) => [
-      ...previous.filter(
-        (report) => !report.id.startsWith("demo-"),
-      ),
-      ...examples,
-    ]);
+    try {
+      await reportsService.confirm(id);
 
-    setNotice(
-      "Dois relatos fictícios foram adicionados perto do local selecionado ou da sua localização.",
-    );
+      if (epoch !== identityEpoch.current) return;
+
+      confirmed.current.add(id);
+
+      setReports((previous) =>
+        previous.map((item) =>
+          item.id === id
+            ? { ...item, confirmedByMe: true }
+            : item,
+        ),
+      );
+
+      setRevision((value) => value + 1);
+
+      try {
+        const detail = await reportsService.get(id);
+
+        if (epoch === identityEpoch.current) {
+          upsert(adaptReport(detail));
+        }
+      } catch {
+        if (epoch === identityEpoch.current) {
+          setError(
+            "Confirmação registrada. Não foi possível atualizar a contagem agora.",
+          );
+        }
+      }
+    } finally {
+      confirmBusy.current.delete(key);
+    }
+  }
+
+  async function reportAbuse(id: string) {
+    const epoch = identityEpoch.current;
+    const key = `${epoch}:${id}`;
+
+    if (
+      abused.current.has(id) ||
+      abuseBusy.current.has(key)
+    ) {
+      return;
+    }
+
+    abuseBusy.current.add(key);
+
+    try {
+      await reportsService.reportAbuse(id);
+
+      if (epoch !== identityEpoch.current) return;
+
+      abused.current.add(id);
+      setRevision((value) => value + 1);
+
+      setReports((previous) =>
+        previous.map((item) =>
+          item.id === id
+            ? { ...item, abuseRegistered: true }
+            : item,
+        ),
+      );
+
+      try {
+        const detail = await reportsService.get(id);
+
+        if (epoch === identityEpoch.current) {
+          upsert(adaptReport(detail));
+        }
+      } catch (failure) {
+        if (epoch !== identityEpoch.current) return;
+
+        if (
+          failure instanceof ApiError &&
+          failure.status === 404
+        ) {
+          setReports((previous) =>
+            previous.filter((item) => item.id !== id),
+          );
+
+          closeDetails();
+        } else {
+          setError(
+            "Denúncia registrada. Não foi possível atualizar o relato agora.",
+          );
+        }
+      }
+    } finally {
+      abuseBusy.current.delete(key);
+    }
+  }
+
+  async function addComment(
+    id: string,
+    text: string,
+    parentId?: string,
+  ) {
+    if (commentOperation.current !== null) {
+      throw new Error(
+        "Aguarde o envio do comentário anterior.",
+      );
+    }
+
+    if (!text.trim() || text.trim().length > 1000) {
+      throw new Error(
+        "Use entre 1 e 1.000 caracteres.",
+      );
+    }
+
+    const epoch = identityEpoch.current;
+    const operation = ++operationSequence.current;
+
+    commentOperation.current = operation;
+
+    try {
+      const value = await commentsService.create(
+        id,
+        text,
+        parentId,
+      );
+
+      if (epoch !== identityEpoch.current) return;
+
+      ownComments.current.add(value.id);
+      const comment = adaptComment(value, true);
+
+      setReports((previous) =>
+        previous.map((item) =>
+          item.id === id
+            ? {
+                ...item,
+                comments: mergeComments(
+                  item.comments,
+                  [comment],
+                ),
+              }
+            : item,
+        ),
+      );
+    } finally {
+      if (commentOperation.current === operation) {
+        commentOperation.current = null;
+      }
+    }
   }
 
   return {
     reports,
-    selectedReport,
+    selectedReport:
+      reports.find((item) => item.id === selectedId) ?? null,
+
     selectedLocation,
+    mapCenter,
+    cameraRevision,
     creationSession,
     notice,
 
-    selectLocation,
-    selectReport,
-    closeDetails,
+    loading,
+    error,
+    commentsError,
+    hasMoreComments,
+    loadingMore,
+    revision,
 
+    selectReport: (report: Pick<Detail, "id">) => {
+      void selectReportById(report.id);
+    },
+
+    selectReportById,
+    closeDetails,
+    selectLocation,
     openCreateReport,
-    closeCreateReport,
     createReport,
 
-    toggleConfirmation,
-    addComment,
-    loadExamples,
+    closeCreateReport: () => setCreationSession(null),
 
-    mapCenter,
-    cameraRevision,
-    recenterMap,
+    confirmReport,
+
+    // Compatibilidade temporária com o nome usado no index.
+    // Não desfaz: confirma pela API.
+    toggleConfirmation: confirmReport,
+
+    reportAbuse,
+    addComment,
+    loadMoreComments,
+
+    recenterMap: () => {
+      setMapCenter({ ...currentCoords });
+      setCameraRevision((value) => value + 1);
+    },
+
+    clearError: () => setError(""),
   };
 }
