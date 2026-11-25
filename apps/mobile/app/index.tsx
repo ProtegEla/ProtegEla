@@ -206,7 +206,7 @@ export default function HomeScreen() {
     setCalculatedRoutes([]);
     setSelectedRouteId(null);
 
-    reportFlow.selectLocation(currentCoords);
+    reportFlow.clearSelection();
 
     setMapCenter(currentCoords);
     setMapZoom(16);
@@ -343,7 +343,7 @@ export default function HomeScreen() {
     setSelectedAddressInfo(null);
     setSearchQuery("");
 
-    reportFlow.selectLocation(currentCoords);
+    reportFlow.clearSelection();
     reportFlow.recenterMap();
 
     setMapCenter(currentCoords);
@@ -409,6 +409,7 @@ export default function HomeScreen() {
 
   const lastFetchedCoordsRef = useRef<Coordinates | null>(null);
   const supportCacheRef = useRef<SupportLocation[]>([]);
+  const isFetchingSupportRef = useRef(false);
 
   const haversineDistanceM = useCallback(
     (
@@ -451,13 +452,15 @@ export default function HomeScreen() {
         coordinates.longitude,
       ) < 500
     ) {
-      setSupportLocations(supportCacheRef.current);
       return;
     }
 
-    setSupportLocations([]);
+    if (isFetchingSupportRef.current) return;
 
     const timer = setTimeout(() => {
+      isFetchingSupportRef.current = true;
+      lastFetchedCoordsRef.current = coordinates;
+
       supportLocationsService
         .getNearby({
           ...coordinates,
@@ -465,10 +468,9 @@ export default function HomeScreen() {
         })
         .then((data) => {
           if (!active) return;
-
-          lastFetchedCoordsRef.current = coordinates;
-          supportCacheRef.current = Array.isArray(data) ? data : [];
-          setSupportLocations(supportCacheRef.current);
+          const list = Array.isArray(data) ? data : [];
+          supportCacheRef.current = list;
+          setSupportLocations(list);
         })
         .catch((error) => {
           if (active) {
@@ -477,8 +479,11 @@ export default function HomeScreen() {
               error,
             );
           }
+        })
+        .finally(() => {
+          isFetchingSupportRef.current = false;
         });
-    }, 250);
+    }, 400);
 
     return () => {
       active = false;
@@ -513,8 +518,9 @@ export default function HomeScreen() {
             cameraRevision={cameraRevision}
             userLocation={location}
             selectedLocation={
-              selectedAddressInfo?.coords ??
-              reportFlow.selectedLocation
+              isRouteMode
+                ? null
+                : (selectedAddressInfo?.coords ?? null)
             }
             destinationLocation={
               isRouteMode
@@ -630,59 +636,8 @@ export default function HomeScreen() {
           </View>
         )}
 
-        {!isRouteMode &&
-          !selectedAddressInfo &&
-          !reportFlow.creationSession && (
-            <View
-              style={[
-                styles.reportHint,
-                {
-                  backgroundColor: colors.surface,
-                  borderColor: colors.border,
-                },
-              ]}
-            >
-              <View style={styles.reportHintRow}>
-                <Ionicons
-                  name="location-outline"
-                  size={19}
-                  color={colors.primaryPurple}
-                />
-                <Text
-                  accessibilityLiveRegion="polite"
-                  style={[
-                    styles.reportHintText,
-                    { color: colors.text },
-                  ]}
-                >
-                  {reportFlow.notice}
-                </Text>
-              </View>
-
-              <TouchableOpacity
-                accessibilityRole="button"
-                onPress={reportFlow.loadExamples}
-                style={styles.reportTestButton}
-              >
-                <Text
-                  style={[
-                    styles.reportTestText,
-                    { color: colors.primaryPurple },
-                  ]}
-                >
-                  Carregar relatos fictícios de teste
-                </Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-        {!isRouteMode && (
-          <View
-            style={[
-              styles.fabsContainer,
-              selectedAddressInfo && { bottom: 104 },
-            ]}
-          >
+        {!isRouteMode && !selectedAddressInfo && (
+          <View style={styles.fabsContainer}>
             <TouchableOpacity
               style={[
                 styles.fabSmall,

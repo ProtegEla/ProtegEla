@@ -60,8 +60,15 @@ export function useHomeReports({
   ]);
 
   function recenterMap() {
+    setSelectedLocation(null);
+    setSelectedId(null);
     setMapCenter({ ...currentCoords });
     setCameraRevision((previous) => previous + 1);
+  }
+
+  function clearSelection() {
+    setSelectedLocation(null);
+    setSelectedId(null);
   }
 
   const sequence = useRef(0);
@@ -308,6 +315,7 @@ export function useHomeReports({
     notice,
 
     selectLocation,
+    clearSelection,
     selectReport,
     closeDetails,
 

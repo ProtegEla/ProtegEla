@@ -77,23 +77,16 @@ const TILE_PROVIDERS: Record<
   clean: {
     url:
       "https://tiles.stadiamaps.com/tiles/alidade_smooth/{z}/{x}/{y}{r}.png",
-    attribution:
-      '&copy; <a href="https://stadiamaps.com/">Stadia Maps</a> ' +
-      '&copy; <a href="https://openmaptiles.org/">OpenMapTiles</a> ' +
-      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    attribution: "",
   },
   clean_dark: {
     url:
       "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png",
-    attribution:
-      '&copy; <a href="https://stadiamaps.com/">Stadia Maps</a> ' +
-      '&copy; <a href="https://openmaptiles.org/">OpenMapTiles</a> ' +
-      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    attribution: "",
   },
   streets: {
     url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-    attribution:
-      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    attribution: "",
   },
   satellite: {
     url:

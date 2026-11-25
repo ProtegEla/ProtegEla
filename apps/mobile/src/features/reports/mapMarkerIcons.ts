@@ -130,32 +130,35 @@ export function createSelectedLocationIcon(L: any) {
 
   element.style.cssText = `
     width: 34px;
-    height: 34px;
-    filter: drop-shadow(0 3px 3px rgba(0,0,0,0.25));
+    height: 38px;
+    filter: drop-shadow(0 3px 4px rgba(0,0,0,0.3));
+    display: flex;
+    justify-content: center;
+    align-items: center;
   `;
 
   element.innerHTML = `
     <svg
       xmlns="http://www.w3.org/2000/svg"
       width="34"
-      height="34"
-      viewBox="0 0 24 24"
+      height="38"
+      viewBox="0 0 24 28"
       aria-hidden="true"
     >
       <path
-        d="M21 3 14 21 11 13 3 10 21 3Z"
+        d="M12 2C7.58 2 4 5.58 4 10c0 5.25 8 16 8 16s8-10.75 8-16c0-4.42-3.58-8-8-8z"
         fill="#8055B5"
         stroke="white"
-        stroke-width="0.7"
-        stroke-linejoin="round"
+        stroke-width="1.5"
       />
+      <circle cx="12" cy="10" r="3.5" fill="white" />
     </svg>
   `;
 
   return L.divIcon({
     className: "",
     html: element,
-    iconSize: [34, 34],
-    iconAnchor: [17, 17],
+    iconSize: [34, 38],
+    iconAnchor: [17, 36],
   });
 }
