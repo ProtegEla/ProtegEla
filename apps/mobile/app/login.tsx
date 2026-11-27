@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -15,6 +15,7 @@ import { theme, useAppTheme } from "../src/theme";
 import { Button, Input, Checkbox, LinkText } from "../src/components/ui";
 import { useAuth } from "../src/features/auth/AuthContext";
 import { authService } from "../src/services/api/auth";
+import { getEffectiveApiBaseUrl, setCustomApiBaseUrl } from "../src/services/api/client";
 
 /**
  * Tela de Login ("Bem-vinda!") - RF02.
@@ -43,6 +44,29 @@ export default function LoginScreen() {
   const [forgotLoading, setForgotLoading] = useState(false);
   const [forgotMessage, setForgotMessage] = useState("");
   const [forgotError, setForgotError] = useState("");
+
+  // Configuração de API
+  const [isApiModalOpen, setIsApiModalOpen] = useState(false);
+  const [apiUrlInput, setApiUrlInput] = useState("");
+  const [apiUrlSaved, setApiUrlSaved] = useState(false);
+
+  const openApiModal = async () => {
+    const current = await getEffectiveApiBaseUrl();
+    setApiUrlInput(current);
+    setApiUrlSaved(false);
+    setIsApiModalOpen(true);
+  };
+
+  const handleSaveApiUrl = async () => {
+    const trimmed = apiUrlInput.trim();
+    if (!trimmed.startsWith("http")) {
+      Alert.alert("URL inválida", "A URL deve começar com http:// ou https://");
+      return;
+    }
+    await setCustomApiBaseUrl(trimmed.endsWith("/") ? trimmed.slice(0, -1) : trimmed);
+    setApiUrlSaved(true);
+    setTimeout(() => setIsApiModalOpen(false), 800);
+  };
 
   const validateForm = (): boolean => {
     let isValid = true;
@@ -261,10 +285,64 @@ export default function LoginScreen() {
                 onPress={() => router.push("/")}
                 textStyle={[styles.backToMapText, { color: colors.textMuted }]}
               />
+
+              <TouchableOpacity
+                onPress={openApiModal}
+                style={{ marginTop: 10, alignItems: "center" }}
+              >
+                <Text style={{ fontSize: 11, color: colors.textMuted, opacity: 0.6 }}>
+                  ⚙ Configurar servidor da API
+                </Text>
+              </TouchableOpacity>
             </View>
           </View>
         </View>
       </ScrollView>
+
+      {/* Modal de configuração de API */}
+      <Modal
+        visible={isApiModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsApiModalOpen(false)}
+      >
+        <View style={styles.forgotBackdrop}>
+          <View
+            style={[
+              styles.forgotCard,
+              { backgroundColor: colors.surface, borderColor: colors.border },
+            ]}
+          >
+            <View style={styles.forgotHeader}>
+              <Text style={[styles.forgotTitle, { color: colors.text }]}>
+                Servidor da API
+              </Text>
+              <TouchableOpacity onPress={() => setIsApiModalOpen(false)}>
+                <Text style={[styles.forgotClose, { color: colors.textMuted }]}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={[styles.forgotTitle, { color: colors.textMuted, fontSize: 12, marginBottom: 8, fontWeight: "normal" }]}>
+              URL base do backend (ex: https://xxxx.ngrok-free.dev/api/v1)
+            </Text>
+            <Input
+              placeholder="https://seu-servidor.com/api/v1"
+              value={apiUrlInput}
+              onChangeText={setApiUrlInput}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="url"
+            />
+            <View style={{ marginTop: 12 }}>
+              <Button
+                title={apiUrlSaved ? "✓ Salvo!" : "Salvar"}
+                variant="primary"
+                onPress={handleSaveApiUrl}
+                isLoading={false}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <Modal
         visible={isForgotOpen}

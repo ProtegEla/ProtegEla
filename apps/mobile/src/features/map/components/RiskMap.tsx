@@ -85,18 +85,16 @@ const TILE_PROVIDERS: Record<
   { url: string; attribution: string }
 > = {
   clean: {
-    url:
-      "https://tiles.stadiamaps.com/tiles/alidade_smooth/{z}/{x}/{y}{r}.png",
-    attribution: "",
+    url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    attribution: "&copy; OpenStreetMap",
   },
   clean_dark: {
-    url:
-      "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png",
-    attribution: "",
+    url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    attribution: "&copy; OpenStreetMap",
   },
   streets: {
-    url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-    attribution: "",
+    url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    attribution: "&copy; OpenStreetMap",
   },
   satellite: {
     url:
@@ -743,6 +741,15 @@ export function RiskMap<
     selectedRouteId,
     isDark,
   ]);
+
+  useEffect(() => {
+    if (!ready || !mapRef.current) return;
+    const tilePane = mapRef.current.getPane("tilePane");
+    if (!tilePane) return;
+    tilePane.style.filter = isDark
+      ? "grayscale(100%) invert(100%) brightness(92%) contrast(92%)"
+      : "grayscale(100%) brightness(104%) contrast(90%)";
+  }, [ready, isDark]);
 
   useEffect(() => {
     if (!ready || !zonesRef.current) return;

@@ -196,6 +196,15 @@ export function buildLeafletWebViewHtml(
           }).bindPopup(createPopupHtml("Você está aqui")).addTo(markersLayer);
         }
 
+        var tilePane = map.getPane("tilePane");
+        if (tilePane) {
+          tilePane.style.filter = (state.isDark && state.tileStyle !== "satellite")
+            ? "grayscale(100%) invert(100%) brightness(92%) contrast(92%)"
+            : (state.tileStyle !== "satellite"
+              ? "grayscale(100%) brightness(104%) contrast(90%)"
+              : "none");
+        }
+
         if (state.selectedLocation) {
           L.marker([state.selectedLocation.latitude, state.selectedLocation.longitude], {
             icon: createSelectedIcon(),
