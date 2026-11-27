@@ -3,7 +3,6 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from src.core.exceptions import EntityNotFoundException
 from src.modules.safety_guides.models import SafetyGuide
 from src.modules.safety_guides.service import SafetyGuideService
@@ -37,17 +36,11 @@ async def test_list_returns_guides_from_query(service):
 
 
 @pytest.mark.anyio
-async def test_list_orders_by_position_then_id(service):
-    service.session.scalars.return_value = []
-    await service.list()
-    statement = service.session.scalars.await_args.args[0]
-    assert "ORDER BY safety_guides.position, safety_guides.id" in sql(statement)
-
-
-@pytest.mark.anyio
-async def test_list_empty(service):
+async def test_list_empty_preserves_ordering(service):
     service.session.scalars.return_value = []
     assert await service.list() == []
+    statement = service.session.scalars.await_args.args[0]
+    assert "ORDER BY safety_guides.position, safety_guides.id" in sql(statement)
 
 
 @pytest.mark.anyio

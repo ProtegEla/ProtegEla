@@ -1,0 +1,72 @@
+PLANO DE TESTES — PROTEGELA
+
+1. OBJETIVO E ESCOPO
+Validar as funcionalidades de docs/doc_inicial.md, considerando os contratos
+de docs/api_contracts.md e as diretrizes de docs/security_and_privacy.md.
+Identificar funcionalidades pelo nome, pois há divergências na numeração RF.
+Funcionalidades ainda não implementadas ficam pendentes de execução.
+
+2. CRITÉRIOS DE SELEÇÃO
+Priorizar impacto na segurança da usuária e na privacidade dos dados.
+Para cada fluxo, verificar sucesso, entradas inválidas, valores limite,
+permissões, estados de erro e recuperação. Cobrir concorrência nas operações
+que possam duplicar registros ou comprometer a integridade dos dados.
+
+3. CENÁRIOS POR FUNCIONALIDADE
+P0 = crítica; P1 = alta; P2 = normal.
+
+P0 — Emergência: confirmar e cancelar acionamento; selecionar contato principal
+ou alternativa pública sem contato/login; iniciar ligação em menos de 1 segundo.
+Validar compartilhamento de localização conforme escopo aprovado, sem realizar
+chamadas reais a serviços de emergência durante os testes.
+
+P0 — Conta e autenticação: cadastro válido/duplicado, senha forte, até 3 contatos
+com 1 principal; login válido/inválido, bloqueio após 5 falhas; rejeição de tokens
+inválidos/expirados; recuperação com token expirado, reutilizado e válido.
+
+P0 — Privacidade e histórico: impedir acesso entre contas; verificar criptografia
+e ausência de dados sensíveis nos logs; histórico sem coordenadas/geometria,
+ordenado, limitado a 100 itens por lista e retido por 30 dias; testar limites,
+expiração, exclusão de conta e limpeza dos dados conforme contrato.
+
+P0 — Risco e rotas: validar 3 confirmações distintas, agrupamento até 20 metros,
+validade de 6/12 meses e pesos de risco; ocultar relatos com denúncias superiores
+a 30% das confirmações e removê-los do cálculo; calcular rotas de pedestres,
+preservar paradas e alertar quando o desvio de tempo ultrapassar 30%.
+Verificar valores abaixo, iguais e acima dos limites e importação SSP sem duplicação.
+
+P1 — Relatos e comentários: validar categoria, localização, datas e texto;
+preservar anonimato; restringir criação a contas autenticadas e edição/exclusão
+à autora; testar respostas, paginação, confirmações/denúncias duplicadas,
+limitação de criação e operações simultâneas.
+
+P1 — Mapa, busca e navegação: mover, ampliar e recentralizar mapa; exibir riscos,
+detalhes e localização; tratar permissão GPS negada e resultados vazios;
+descartar buscas defasadas; verificar instruções, alertas de proximidade e
+continuidade da navegação com app minimizado ou tela bloqueada.
+
+P1 — Rede e locais de apoio: validar localização e ordenação dos locais próximos;
+simular timeout e indisponibilidade de Overpass/ORS; usar cache real quando
+disponível, informar perda de conexão e tratar ausência de cache sem travamento;
+pausar operações que exigem servidor até a conexão retornar.
+
+P2 — Conteúdo e preferências: consultar telefones públicos e orientações sem
+login; restringir contatos privados à própria conta; atualizar perfil, contatos,
+tema e notificações, verificando persistência das preferências.
+
+4. EXECUÇÃO
+- Unitários: regras de negócio, hooks e serviços do aplicativo.
+- Integração: endpoints, permissões, contratos de erro e persistência em
+  PostgreSQL/PostGIS local; simular serviços externos nos testes automatizados.
+- Fluxos completos em Android/iOS: emergência, mapa, navegação e permissões;
+  medir mapa e riscos em até 3 segundos sob 4G e ligação em menos de 1 segundo;
+  verificar contraste, legibilidade e tamanho dos alvos de toque.
+- Usar banco isolado, contas e localizações fictícias; nunca dados pessoais reais.
+
+5. REGISTRO E APROVAÇÃO
+Registrar por cenário: identificação, precondições, passos, resultado esperado,
+resultado obtido e evidência (teste automatizado ou execução manual).
+Marcar como aprovado, reprovado, bloqueado ou pendente; registrar defeitos.
+Aprovar o escopo entregue somente com todos os cenários aplicáveis executados
+e aprovados, sem testes falhando. Pendências e divergências de requisitos devem
+ser explicitadas e submetidas à equipe; não contam como cenários aprovados.

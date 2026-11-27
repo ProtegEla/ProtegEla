@@ -1,0 +1,135 @@
+RELATÓRIO DE TESTES — PROTEGELA
+Data: 26/11/2026
+Referência: docs/plano_de_testes.txt
+
+1. LEVANTAMENTO E ESCOPO DA ITERAÇÃO
+A suíte existente concentra a cobertura no backend: autenticação, cadastro,
+relatos, comentários, atividade própria, histórico privado, risco espacial,
+rotas, importação SSP, emergência, orientações e migrações. O aplicativo tinha
+duas suítes, com quatro testes de serviços de endereços e rotas.
+Foram acrescentados cenários automatizáveis às implementações existentes.
+O plano completo ainda não está validado: faltam testes de telas, hooks,
+dispositivos e funcionalidades pendentes, discriminados abaixo.
+
+2. TESTES IMPLEMENTADOS E AJUSTADOS
+- Recuperação de senha: seis casos unitários sobre conta inexistente, hash do
+  token, validade de 15 minutos, token ausente/usado/expirado, conta removida,
+  troca de hash e rejeição de reutilização.
+- Recuperação via API: quatro casos adicionais, incluindo PostgreSQL real,
+  invalidação do token anterior, troca de senha, reutilização e corpos inválidos.
+  O envio SMTP permanece simulado nos testes existentes; não foi enviado e-mail.
+- Coordenadas e tempo decorrido: 22 casos de limites geográficos, valores não
+  finitos, datas inválidas, futuras e transições entre minutos, horas e dias.
+- Busca de endereços de relatos: quatro casos de filtragem de resultados,
+  encaminhamento de cancelamento, resposta inesperada e falhas HTTP/rede.
+- Locais de apoio: quatro casos de ordenação por distância, persistência dos
+  resultados, cache em indisponibilidade e ausência de dados/cache.
+- Rotas no cliente: dois casos adicionais para ordem das paradas, propagação
+  de erro, preservação de atribuição e candidata única sem alternativas fictícias.
+- Armazenamento local: quatro casos de caches independentes, ausência de cache,
+  limite de dez pesquisas, deduplicação, exclusão e JSON de pesquisas corrompido.
+- Jest configurado para executar TypeScript em Node com Babel já instalado.
+- Teste de downgrade do histórico corrigido para consultar explicitamente o
+  schema isolado. Antes, uma tabela homônima em public causava falso negativo.
+
+3. AMBIENTE E REPRODUÇÃO
+Python 3.12.12; PostgreSQL 16.15 com PostGIS; Node 26.5.0; Jest do package-lock.
+Dependências existentes instaladas em ambiente Python temporário e por npm ci.
+Foi necessário instalar o extra asyncio do SQLAlchemy (greenlet) no ambiente
+temporário. Nenhum manifesto de dependências ou código de produção foi alterado.
+Banco exclusivo protegela_test, porta 55432, com migrações até head; fixtures
+isolam schemas e transações. ORS/Overpass simulados; sem chamadas de emergência.
+
+Para repetir (a partir de backend, com ambiente virtual preparado):
+  export DEBUG=false
+  export TEST_DATABASE_URL='postgresql+asyncpg://USUARIO@HOST:PORTA/protegela_test'
+  export TEST_DATABASE_SYNC_URL='postgresql+psycopg2://USUARIO@HOST:PORTA/protegela_test'
+  python -m pytest tests -q
+Preparar antes o banco com PostGIS e alembic upgrade head, usando
+DATABASE_SYNC_URL com driver psycopg2 e chaves fictícias de teste válidas.
+Sem as variáveis TEST_DATABASE*, parte da suíte é pulada e não comprova integração.
+
+No diretório apps/mobile:
+  npm ci
+  npm test -- --runInBand
+  ./node_modules/.bin/tsc --noEmit --pretty false
+
+4. RESULTADOS DA EXECUÇÃO INICIAL (ANTES DA LIMPEZA)
+- Backend completo: 551 aprovados, zero falhas, zero pulados; 67,34 s.
+  São 292 casos unitários e 259 de integração, incluindo PostgreSQL/PostGIS,
+  migrações, concorrência e privacidade. Foram adicionados 11 casos nesta iteração.
+- Aplicativo: 40 aprovados em seis suítes, zero falhas/pulados; 0,709 s.
+  Foram adicionados 36 casos. APIs e armazenamento nativo são simulados.
+- TypeScript (tsc --noEmit): aprovado.
+- Ruff nos testes Python novos/ampliados e git diff --check: aprovados.
+- Cobertura de linhas do backend: 94% (2.271 instruções, 141 não cobertas).
+  Medida com coverage run --source=src -m pytest tests; sem cobertura de branches
+  nem de processos filhos. Não representa percentual de requisitos atendidos.
+  Lacunas visíveis: auth/email.py 29%, history/service.py 76%, comandos
+  history/cleanup.py e risk_zones/import_ssp.py 0%; os serviços usados por esses
+  comandos possuem testes, mas isso não comprova a execução dos comandos.
+- Persistem 157 avisos na suíte, principalmente depreciação do HTTP 422;
+  também houve aviso de configuração do escopo assíncrono no início da execução.
+As primeiras execuções identificaram duas verificações incorretas, corrigidas:
+código específico de senha fraca e consulta de tabela após downgrade.
+Os testes unitários do backend passaram (292 casos) antes da execução completa.
+
+5. DÍVIDAS E PENDÊNCIAS POR PRIORIDADE
+P0 — Emergência: validar confirmação/cancelamento e chamada nativa em dispositivo,
+contato correto, acesso sem login, alternativa pública e latência menor que 1 s.
+EmergencyModal.tsx contém alternativa 1052 e nome padrão; revisar o uso desse
+componente antes de considerá-lo compatível com o requisito de emergência.
+
+P0 — Risco apresentado: routes.ts converte exposição null em zero para o badge
+e pode exibir risco baixo com avaliação indisponível. Também aplica limiares
+locais de severidade e rótulos de recomendação; o contrato não garante segurança
+nem define esses níveis. Necessária correção e testes de regressão desses estados.
+
+P0 — Identificação do dispositivo: localStorage.ts gera ID com prefixo dev-,
+enquanto a criação de relatos exige X-Device-Id UUID v4. Validar/corrigir o fluxo
+completo entre armazenamento, cliente HTTP e backend.
+
+P0 — Conta/privacidade: users/router.py oferece status e atividade, sem as rotas
+de edição/exclusão de perfil propostas. Exclusão completa de conta depende de
+implementação e definição dos vínculos de relatos/comentários; cascata do
+histórico em banco não comprova o fluxo de exclusão pela usuária.
+Validar HTTPS e sanitização de logs de ponta a ponta na implantação.
+
+P1 — Alertas/navegação: notifications/router.py contém somente status. Faltam
+validação funcional de proximidade, permissões GPS, navegação em segundo plano,
+tela bloqueada e notificação persistente, em Android/iOS.
+
+P1 — Interface: faltam testes de hooks, telas, estado de autenticação e componentes
+críticos. Testes de funções/serviços em Node não comprovam renderização, descarte
+de respostas antigas pela tela, acessibilidade ou desempenho em aparelho.
+
+P1 — Offline: testar cache corrompido/falha de armazenamento para rota, riscos e
+locais de apoio, reconexão e pausa de novos relatos. O cache de locais de apoio
+é global e retorna dados anteriores sem recorte pela posição atual; validar sua
+adequação e atualização das distâncias ao mudar de região.
+
+P1 — Integrações reais: entrega de e-mail, chave/cota ORS, qualidade/licença SSP
+e cobertura OSM não foram validadas. Falhas externas são simuladas nos testes.
+Ampliar recuperação de senha com requisições simultâneas e falhas transacionais.
+
+P2 — Qualidade e manutenção: medir mapa/riscos em até 3 s sob 4G, contraste e
+alvos de toque em dispositivos. Validar preferências e contatos pelas telas.
+Uniformizar referências RF entre documentos e contratos com trechos históricos.
+Declarar a dependência assíncrona do SQLAlchemy e estabilizar versões do backend
+mediante revisão da equipe. Há avisos de depreciação de HTTP 422 e configuração
+de escopo do pytest-asyncio. Agendar a limpeza de histórico na implantação.
+
+6. INTERPRETAÇÃO
+Suíte automatizada aprovada não equivale à aprovação integral do produto.
+Pendências acima não foram escondidas com skip/xfail nem dadas como aprovadas.
+Não foram implementadas funcionalidades de produção para preencher essas lacunas.
+
+Validação após a limpeza:
+- Backend: 547 aprovados (290 unitários e 257 de integração), zero falhas e
+  zero pulados; 68,31 s, com PostgreSQL/PostGIS e migrações reais.
+- Cobertura de linhas preservada: 2.130 de 2.271 instruções, 141 não cobertas
+  (93,79%, exibidos como 94%). Nenhuma perda na contagem de linhas cobertas.
+- Ruff nos três arquivos de testes alterados e git diff --check: aprovados.
+- Aplicativo inalterado nesta revisão; permanece a evidência anterior de 40
+  testes aprovados, sem nova execução. Persistem os 157 avisos do backend.
+As dívidas e validações humanas da seção 5 continuam pendentes.
