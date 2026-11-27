@@ -290,6 +290,7 @@ def test_history_migration_roundtrip_and_cascade(migration_database):
         assert connection.scalar(text("SELECT count(*) FROM history_entries")) == 0
     migrate("downgrade", "d54d18c82688")
     with engine.connect() as connection:
-        assert not inspect(connection).has_table("history_entries")
+        schema = connection.scalar(text("SELECT current_schema()"))
+        assert not inspect(connection).has_table("history_entries", schema=schema)
     migrate("upgrade", "head")
     migrate("check")
