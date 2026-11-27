@@ -14,6 +14,7 @@ from geoalchemy2.shape import from_shape
 from shapely.geometry import Point
 from shapely.geometry.base import BaseGeometry
 from sqlalchemy import func, select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.modules.risk_zones.models import SSPSafetyRecord
 
@@ -41,6 +42,23 @@ def normalized(value: str) -> str:
     )
 
 
+RUBRICA_TO_CATEGORY: dict[str, str] = {
+    "FURTO (ART. 155)": "Furto",
+    "ROUBO (ART. 157)": "Roubo",
+    "LESAO CORPORAL (ART. 129)": "Violência",
+    "HOMICIDIO (ART. 121)": "Violência",
+    "FEMINICIDIO": "Violência",
+    "EXTORSAO MEDIANTE SEQUESTRO (ART. 159)": "Violência",
+    "ESTUPRO - ART. 213": "Assédio",
+    "ESTUPRO DE VULNERAVEL (ART.217-A)": "Assédio",
+    "IMPORTUNACAO SEXUAL (ART. 215-A)": "Assédio",
+}
+
+
+def resolve_ssp_category(rubrica: str) -> str | None:
+    return RUBRICA_TO_CATEGORY.get(normalized(rubrica))
+
+
 @dataclass(frozen=True)
 class Candidate:
     version: int
@@ -48,6 +66,7 @@ class Candidate:
     longitude: float | None = None
     incident_date: date | None = None
     rejection: str | None = None
+    category: str = "Furto"
 
 
 def parse_csv(
@@ -117,13 +136,18 @@ def parse_csv(
                 values.add((None, None, None, reason))
             else:
                 values.add((lat, lon, day, None))
+        matched_categories = [
+            cat for r in latest if (cat := resolve_ssp_category(r["RUBRICA"])) is not None
+        ]
         if len(values) != 1:
             candidate = Candidate(version, rejection="conflicting_latest_version")
-        elif not any(normalized(r["RUBRICA"]) == "FURTO (ART. 155)" for r in latest):
+        elif not matched_categories:
             candidate = Candidate(version, rejection="unsupported_nature")
         else:
             lat, lon, day, reason = values.pop()
-            candidate = Candidate(version, lat, lon, day, reason)
+            candidate = Candidate(
+                version, lat, lon, day, reason, category=matched_categories[0]
+            )
         candidates[key] = candidate
         counts[candidate.rejection or "accepted"] += 1
     return candidates, counts
@@ -145,35 +169,70 @@ async def import_ssp(
         raise ValueError("URL SSP ou período inválido.")
     candidates, counts = parse_csv(content, boundary)
     digest = hashlib.sha256(content).hexdigest()
+    period = source_period.strip()
+    batch_size = 2000
+    items = list(candidates.items())
+
     try:
         # Serializa cargas concorrentes; não há consulta externa na transação.
         await session.execute(text("SELECT pg_advisory_xact_lock(73320603)"))
-        for key, item in candidates.items():
-            record = await session.scalar(
-                select(SSPSafetyRecord)
-                .where(SSPSafetyRecord.source_key == key)
-                .execution_options(populate_existing=True)
+
+        for offset in range(0, len(items), batch_size):
+            chunk = items[offset : offset + batch_size]
+            keys = [k for k, _ in chunk]
+
+            existing_rows = await session.execute(
+                select(SSPSafetyRecord.source_key, SSPSafetyRecord.source_version).where(
+                    SSPSafetyRecord.source_key.in_(keys)
+                )
             )
-            if record and record.source_version > item.version:
-                counts["ignored_older"] += 1
-                continue
-            if record is None:
-                record = SSPSafetyRecord(id=uuid4(), source_key=key)
-                session.add(record)
-            record.source_version = item.version
-            record.location = (
-                from_shape(Point(item.longitude, item.latitude), srid=4326)
-                if item.rejection is None
-                else None
-            )
-            record.incident_date = (
-                item.incident_date if item.rejection is None else None
-            )
-            record.is_active = item.rejection is None
-            record.source_url = source_url
-            record.source_period = source_period.strip()
-            record.file_sha256 = digest
-            record.imported_at = func.clock_timestamp()
+            existing_versions = dict(existing_rows.all())
+
+            upsert_values: list[dict] = []
+            for key, item in chunk:
+                prev_version = existing_versions.get(key)
+                if prev_version is not None and prev_version > item.version:
+                    counts["ignored_older"] += 1
+                    continue
+
+                is_valid = item.rejection is None
+                upsert_values.append(
+                    {
+                        "id": uuid4(),
+                        "source_key": key,
+                        "source_version": item.version,
+                        "category": item.category,
+                        "location": (
+                            from_shape(Point(item.longitude, item.latitude), srid=4326)
+                            if is_valid
+                            else None
+                        ),
+                        "incident_date": item.incident_date if is_valid else None,
+                        "is_active": is_valid,
+                        "source_url": source_url,
+                        "source_period": period,
+                        "file_sha256": digest,
+                    }
+                )
+
+            if upsert_values:
+                stmt = pg_insert(SSPSafetyRecord).values(upsert_values)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["source_key"],
+                    set_={
+                        "source_version": stmt.excluded.source_version,
+                        "category": stmt.excluded.category,
+                        "location": stmt.excluded.location,
+                        "incident_date": stmt.excluded.incident_date,
+                        "is_active": stmt.excluded.is_active,
+                        "source_url": stmt.excluded.source_url,
+                        "source_period": stmt.excluded.source_period,
+                        "file_sha256": stmt.excluded.file_sha256,
+                        "imported_at": func.clock_timestamp(),
+                    },
+                )
+                await session.execute(stmt)
+
         await session.commit()
     except Exception:
         await session.rollback()
@@ -211,6 +270,35 @@ FROM incidents i ORDER BY i.key
 )
 
 
+_GROUP_BBOX_QUERY = text(
+    """
+WITH viewport AS MATERIALIZED (
+    SELECT ST_MakeEnvelope(:west, :south, :east, :north, 4326)::geography AS geog
+),
+incidents AS MATERIALIZED (
+    SELECT 'app:' || id::text AS key, id, 'app'::text AS source,
+           category::text AS category, description, incident_date, location
+    FROM reports, viewport
+    WHERE NOT is_hidden AND ST_DWithin(location::geography, viewport.geog, 100.0)
+    UNION ALL
+    SELECT 'ssp:' || id::text, id, 'ssp', category, NULL::text,
+           incident_date, location
+    FROM ssp_safety_records, viewport
+    WHERE is_active AND ST_DWithin(location::geography, viewport.geog, 100.0)
+)
+SELECT i.key, i.id, i.source, i.category, i.description, i.incident_date,
+       ST_AsGeoJSON(i.location, 15)::json AS location,
+       ST_AsGeoJSON(ST_Buffer(i.location::geography, 10)::geometry, 15)::json AS buffer,
+       ARRAY(
+           SELECT n.key FROM incidents n
+           WHERE n.key <> i.key
+           AND ST_DWithin(n.location::geography, i.location::geography, 20.0000001)
+       ) AS neighbors
+FROM incidents i ORDER BY i.key
+"""
+)
+
+
 @dataclass(frozen=True, kw_only=True)
 class ZoneIncident:
     id: UUID
@@ -219,6 +307,35 @@ class ZoneIncident:
     description: str | None
     incident_date: date
     location: dict
+
+
+_GROUP_BBOX_QUERY = text(
+    """
+WITH viewport AS MATERIALIZED (
+    SELECT ST_MakeEnvelope(:west, :south, :east, :north, 4326)::geography AS geog
+),
+incidents AS MATERIALIZED (
+    SELECT 'app:' || id::text AS key, id, 'app'::text AS source,
+           category::text AS category, description, incident_date, location
+    FROM reports, viewport
+    WHERE NOT is_hidden AND ST_DWithin(location::geography, viewport.geog, 100.0)
+    UNION ALL
+    SELECT 'ssp:' || id::text, id, 'ssp', category, NULL::text,
+           incident_date, location
+    FROM ssp_safety_records, viewport
+    WHERE is_active AND ST_DWithin(location::geography, viewport.geog, 100.0)
+)
+SELECT i.key, i.id, i.source, i.category, i.description, i.incident_date,
+       ST_AsGeoJSON(i.location, 15)::json AS location,
+       ST_AsGeoJSON(ST_Buffer(i.location::geography, 10)::geometry, 15)::json AS buffer,
+       ARRAY(
+           SELECT n.key FROM incidents n
+           WHERE n.key <> i.key
+           AND ST_DWithin(n.location::geography, i.location::geography, 20.0000001)
+       ) AS neighbors
+FROM incidents i ORDER BY i.key
+"""
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -302,11 +419,20 @@ class RiskZoneService:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def group(self) -> list[RiskZone]:
-        """Agrupa todos os membros visíveis antes de qualquer recorte de mapa."""
-        result = await self.session.execute(
-            _GROUP_QUERY.execution_options(autoflush=False)
-        )
+    async def group(
+        self, bounds: tuple[float, float, float, float] | None = None
+    ) -> list[RiskZone]:
+        """Agrupa membros visíveis; quando bounds é informado, filtra via índice GiST antes do agrupamento."""
+        if bounds is not None:
+            west, south, east, north = bounds
+            result = await self.session.execute(
+                _GROUP_BBOX_QUERY.execution_options(autoflush=False),
+                {"west": west, "south": south, "east": east, "north": north},
+            )
+        else:
+            result = await self.session.execute(
+                _GROUP_QUERY.execution_options(autoflush=False)
+            )
         return group_incidents(result.mappings().all())
 
     async def list(self, bbox: str) -> list[RiskZone]:
@@ -317,7 +443,7 @@ class RiskZoneService:
         viewport = box(*bounds)
         zones = [
             zone
-            for zone in await self.group()
+            for zone in await self.group(bounds)
             if shape(zone.geometry).intersects(viewport)
         ]
         if len(zones) > 500:

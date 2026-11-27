@@ -5,6 +5,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { StyleSheet, View, Platform } from "react-native";
 import { ThemeProvider, useAppTheme } from "../src/theme";
 import { AuthProvider } from "../src/features/auth/AuthContext";
+import "../src/features/routes/services/backgroundNavigation";
 
 function InnerLayout() {
   const { colors, isDark } = useAppTheme();

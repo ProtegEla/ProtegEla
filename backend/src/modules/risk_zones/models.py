@@ -30,7 +30,10 @@ class SSPSafetyRecord(Base):
             postgresql_where=text("is_active"),
         ),
         CheckConstraint("source_version >= 1", name="ck_ssp_version"),
-        CheckConstraint("category = 'Furto'", name="ck_ssp_category"),
+        CheckConstraint(
+            "category IN ('Furto', 'Roubo', 'Violência', 'Assédio')",
+            name="ck_ssp_category",
+        ),
         CheckConstraint(
             "NOT is_active OR (location IS NOT NULL AND incident_date IS NOT NULL)",
             name="ck_ssp_active_content",

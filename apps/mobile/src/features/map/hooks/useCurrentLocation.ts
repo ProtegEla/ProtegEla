@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { Platform } from "react-native";
 import * as Location from "expo-location";
 import { Coordinates } from "../types";
 
@@ -159,9 +160,43 @@ export function useCurrentLocation(): UseCurrentLocationResult {
       }
     }
 
+    // Monitoramento contínuo no Mobile (Android/iOS)
+    let mobileSub: Location.LocationSubscription | null = null;
+    let isMounted = true;
+
+    if (Platform.OS !== "web") {
+      (async () => {
+        try {
+          const { status } = await Location.getForegroundPermissionsAsync();
+          if (status !== "granted" || !isMounted) return;
+          mobileSub = await Location.watchPositionAsync(
+            {
+              accuracy: Location.Accuracy.BestForNavigation,
+              timeInterval: 3000,
+              distanceInterval: 5,
+            },
+            (pos) => {
+              if (!isMounted) return;
+              setLocation({
+                latitude: pos.coords.latitude,
+                longitude: pos.coords.longitude,
+              });
+              setPermissionGranted(true);
+            }
+          );
+        } catch {
+          // Ignora se indisponível
+        }
+      })();
+    }
+
     return () => {
+      isMounted = false;
       if (watchId !== null && typeof navigator !== "undefined" && navigator.geolocation) {
         navigator.geolocation.clearWatch(watchId);
+      }
+      if (mobileSub) {
+        mobileSub.remove();
       }
     };
   }, [requestAndFetchLocation]);

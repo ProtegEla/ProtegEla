@@ -8,6 +8,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { BottomNavigation } from '../src/components/ui/BottomNavigation';
 
 export type PoliceStation = {
   id: string;
@@ -18,7 +19,7 @@ export type PoliceStation = {
 };
 
 type Props = {
-  onClose: () => void;
+  onClose?: () => void;
   stations?: PoliceStation[] | null;
   addressLabel?: string;
   onSelectAddress?: () => void;
@@ -63,6 +64,16 @@ export default function PoliceStationsScreen({
     ? stations
     : PLACEHOLDER_STATIONS;
 
+  function handleClose() {
+    if (onClose) {
+      onClose();
+    } else if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/');
+    }
+  }
+
   return (
     <SafeAreaView style={s.screen}>
       <ScrollView contentContainerStyle={s.scroll}>
@@ -73,7 +84,7 @@ export default function PoliceStationsScreen({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Fechar delegacias"
-              onPress={() => router.dismissAll()}
+              onPress={handleClose}
               style={({ pressed }) => [
                 s.close,
                 pressed && s.pressed,
@@ -205,6 +216,22 @@ export default function PoliceStationsScreen({
           </View>
         </View>
       </ScrollView>
+
+      {/* Barra Inferior Persistente com Botão de Emergência (RF14) */}
+      <BottomNavigation
+        activeTab="delegacias"
+        onTabPress={(tab) => {
+          if (tab === 'delegacias') return;
+          router.push(
+            tab === 'telefones'
+              ? '/telefones'
+              : tab === 'orientacoes'
+                ? '/orientacoes'
+                : '/',
+          );
+        }}
+        onPanicPress={() => router.push('/emergency')}
+      />
     </SafeAreaView>
   );
 }

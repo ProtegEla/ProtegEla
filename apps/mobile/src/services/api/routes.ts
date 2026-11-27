@@ -22,13 +22,35 @@ export interface BackendRouteRisk {
   exposure_score: number | null;
 }
 
+export interface BackendRouteStep {
+  instruction: string;
+  distance_m: number;
+  duration_s: number;
+  way_points: [number, number];
+}
+
+export interface BackendRouteLeg {
+  distance_m: number;
+  duration_s: number;
+  steps: BackendRouteStep[];
+}
+
 export interface BackendWalkingRoute {
   id: string;
   geometry: BackendGeometry;
   distance_m: number;
   duration_s: number;
-  legs: unknown[];
+  legs: BackendRouteLeg[];
   risk: BackendRouteRisk;
+}
+
+export interface RouteStep {
+  instruction: string;
+  distanceM: number;
+  durationS: number;
+  wayPoints: [number, number];
+  /** Coordenada de destino da manobra (fim do segmento way_points). */
+  targetCoordinate: RouteCoordinate;
 }
 
 export interface BackendRouteComparison {
@@ -62,6 +84,9 @@ export interface RouteOption {
   riskBadgeLabel: string;
   riskBadgeColor: string;
   coordinates: RouteCoordinate[];
+  steps: RouteStep[];
+  distanceMeters: number;
+  durationSeconds: number;
   exposureScore: number | null;
 }
 
@@ -69,6 +94,65 @@ export interface RouteCalculationResult {
   routes: RouteOption[];
   comparison: BackendRouteComparison;
   attribution: string;
+}
+
+function extractStepsFromLegs(
+  legs: BackendRouteLeg[] | undefined,
+  coordinates: RouteCoordinate[]
+): RouteStep[] {
+  if (!Array.isArray(legs) || coordinates.length === 0) return [];
+  const steps: RouteStep[] = [];
+
+  for (const leg of legs) {
+    if (!Array.isArray(leg?.steps)) continue;
+    for (const step of leg.steps) {
+      if (!step?.instruction) continue;
+      const startIdx = Array.isArray(step.way_points) ? step.way_points[0] : 0;
+      const endIdx = Array.isArray(step.way_points) ? step.way_points[1] : startIdx;
+      const safeEnd = Math.min(Math.max(0, endIdx), coordinates.length - 1);
+      const safeStart = Math.min(Math.max(0, startIdx), coordinates.length - 1);
+
+      steps.push({
+        instruction: step.instruction,
+        distanceM: Number(step.distance_m) || 0,
+        durationS: Number(step.duration_s) || 0,
+        wayPoints: [safeStart, safeEnd],
+        targetCoordinate: coordinates[safeEnd],
+      });
+    }
+  }
+
+  return steps;
+}
+
+function getRiskPresentation(
+  exposureScore: number | null,
+  forceMediumForFastest = false
+): {
+  riskLevel: "baixo" | "médio" | "alto";
+  riskBadgeLabel: string;
+  riskBadgeColor: string;
+} {
+  const score = exposureScore ?? 0;
+  if (score > 50) {
+    return {
+      riskLevel: "alto",
+      riskBadgeLabel: "Risco alto",
+      riskBadgeColor: "#D32F2F",
+    };
+  }
+  if (score > 15 || forceMediumForFastest) {
+    return {
+      riskLevel: "médio",
+      riskBadgeLabel: "Risco médio",
+      riskBadgeColor: "#E65100",
+    };
+  }
+  return {
+    riskLevel: "baixo",
+    riskBadgeLabel: "Risco baixo",
+    riskBadgeColor: "#00796B",
+  };
 }
 
 export const routesService = {
@@ -108,20 +192,7 @@ export const routesService = {
       }));
       const baseDurationMin = Math.max(1, Math.round(single.duration_s / 60));
       const baseDistKm = Number((single.distance_m / 1000).toFixed(1));
-
-      const score = single.risk.exposure_score ?? 0;
-      let riskLevel: "baixo" | "médio" | "alto" = "baixo";
-      let riskBadgeLabel = "Risco baixo";
-      let riskBadgeColor = "#00796B";
-      if (score > 50) {
-        riskLevel = "alto";
-        riskBadgeLabel = "Risco alto";
-        riskBadgeColor = "#D32F2F";
-      } else if (score > 15) {
-        riskLevel = "médio";
-        riskBadgeLabel = "Risco médio";
-        riskBadgeColor = "#E65100";
-      }
+      const risk = getRiskPresentation(single.risk.exposure_score);
 
       return {
         routes: [
@@ -134,10 +205,11 @@ export const routesService = {
             durationLabel: `${baseDurationMin} min`,
             distanceKm: baseDistKm,
             distanceLabel: `${baseDistKm.toFixed(1).replace(".", ",")} km`,
-            riskLevel,
-            riskBadgeLabel,
-            riskBadgeColor,
+            ...risk,
             coordinates: baseCoords,
+            steps: extractStepsFromLegs(single.legs, baseCoords),
+            distanceMeters: single.distance_m,
+            durationSeconds: single.duration_s,
             exposureScore: single.risk.exposure_score,
           },
         ],
@@ -177,21 +249,10 @@ export const routesService = {
         tagBgColor = "#6A1B9A";
       }
 
-      // Avaliação do badge de risco
-      const score = route.risk.exposure_score ?? 0;
-      let riskLevel: "baixo" | "médio" | "alto" = "baixo";
-      let riskBadgeLabel = "Risco baixo";
-      let riskBadgeColor = "#00796B";
-
-      if (score > 50) {
-        riskLevel = "alto";
-        riskBadgeLabel = "Risco alto";
-        riskBadgeColor = "#D32F2F";
-      } else if (score > 15 || (typeTag === "fastest" && rawRoutes.length > 1)) {
-        riskLevel = "médio";
-        riskBadgeLabel = "Risco médio";
-        riskBadgeColor = "#E65100";
-      }
+      const risk = getRiskPresentation(
+        route.risk.exposure_score,
+        typeTag === "fastest" && rawRoutes.length > 1
+      );
 
       // Converte GeoJSON [lon, lat] para { latitude, longitude } do mapa
       const coordinates: RouteCoordinate[] = route.geometry.coordinates.map(([lon, lat]) => ({
@@ -211,10 +272,11 @@ export const routesService = {
         durationLabel: `${durationMinutes} min`,
         distanceKm,
         distanceLabel: `${distanceKm.toFixed(1).replace(".", ",")} km`,
-        riskLevel,
-        riskBadgeLabel,
-        riskBadgeColor,
+        ...risk,
         coordinates,
+        steps: extractStepsFromLegs(route.legs, coordinates),
+        distanceMeters: route.distance_m,
+        durationSeconds: route.duration_s,
         exposureScore: route.risk.exposure_score,
       };
     });

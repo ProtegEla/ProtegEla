@@ -23,6 +23,7 @@ import {
 import { useAppTheme } from "../../../theme";
 
 import {
+  createPoliceStationIcon,
   createReportMarkerIcon,
   createSelectedLocationIcon,
 } from "../../reports/mapMarkerIcons";
@@ -308,7 +309,7 @@ export function RiskMap<
           ],
           zoom: initial.zoom,
           zoomControl: false,
-          attributionControl: true,
+          attributionControl: false,
         });
 
         leafletRef.current = L;
@@ -386,13 +387,24 @@ export function RiskMap<
 
   useEffect(() => {
     if (!ready || !mapRef.current) return;
-    if (!isValidCoordinates(center)) return;
+    if (!isValidCoordinates(center) || !Number.isFinite(zoom)) return;
 
-    mapRef.current.flyTo(
-      [center.latitude, center.longitude],
-      zoom,
-      { duration: 0.8 },
-    );
+    const map = mapRef.current;
+    const container = containerRef.current;
+    if (!container || container.clientWidth === 0 || container.clientHeight === 0) {
+      return;
+    }
+
+    try {
+      map.invalidateSize(false);
+      map.flyTo(
+        [center.latitude, center.longitude],
+        zoom,
+        { duration: 0.8 },
+      );
+    } catch {
+      // Ignora caso o container esteja oculto durante transição de tela
+    }
   }, [
     ready,
     center.latitude,
@@ -571,7 +583,7 @@ export function RiskMap<
       const marker = L.marker(
         [location.latitude, location.longitude],
         {
-          icon: createMarkerIcon(L, "#6D4DA8", "◆"),
+          icon: createPoliceStationIcon(L),
           title: location.name,
           zIndexOffset: 500,
           interactive,

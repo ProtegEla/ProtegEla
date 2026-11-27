@@ -42,6 +42,7 @@ import type {
 } from "../src/features/map/types";
 
 import { supportLocationsService } from "../src/services/api/supportLocations";
+import { riskZonesService } from "../src/services/api/riskZones";
 
 import {
   CreateReportBottomSheet,
@@ -58,6 +59,8 @@ import {
 import { AddressSearchModal } from "../src/features/routes/components/AddressSearchModal";
 import { RoutePlanningBar } from "../src/features/routes/components/RoutePlanningBar";
 import { RouteOptionsBottomSheet } from "../src/features/routes/components/RouteOptionsBottomSheet";
+import { ActiveNavigationOverlay } from "../src/features/routes/components/ActiveNavigationOverlay";
+import { useRouteNavigation } from "../src/features/routes/hooks/useRouteNavigation";
 
 import { useHomeReports } from "../src/features/reports/useHomeReports";
 import { DangerPointDetailsModal } from "../src/features/reports/components/DangerPointDetailsModal";
@@ -122,16 +125,37 @@ export default function HomeScreen() {
     };
   }, []);
 
-  const mapRoutes = useMemo(
-    () =>
-      calculatedRoutes.map((route) => ({
-        id: route.id,
-        coordinates: route.coordinates,
-        color: route.tagBgColor,
-        isSelected: route.id === selectedRouteId,
-      })),
-    [calculatedRoutes, selectedRouteId],
+  const handleFollowNavigationLocation = useCallback(
+    (coords: Coordinates) => {
+      setMapCenter(coords);
+      setMapZoom(17);
+    },
+    [],
   );
+
+  const navigation = useRouteNavigation({
+    currentLocation: location,
+    onFollowLocation: handleFollowNavigationLocation,
+  });
+
+  const mapRoutes = useMemo(() => {
+    const source =
+      navigation.isNavigating && navigation.activeRoute
+        ? [navigation.activeRoute]
+        : calculatedRoutes;
+
+    return source.map((route) => ({
+      id: route.id,
+      coordinates: route.coordinates,
+      color: route.tagBgColor,
+      isSelected: route.id === selectedRouteId || navigation.isNavigating,
+    }));
+  }, [
+    calculatedRoutes,
+    selectedRouteId,
+    navigation.isNavigating,
+    navigation.activeRoute,
+  ]);
 
   useEffect(() => {
     if (
@@ -270,14 +294,16 @@ export default function HomeScreen() {
           "Nenhuma rota encontrada para este destino.",
         );
       }
-    } catch {
+    } catch (error: any) {
       if (
         mountedRef.current &&
         requestId === routeRequestRef.current
       ) {
-        setRouteError(
-          "Não foi possível calcular as rotas. Tente novamente.",
-        );
+        const message =
+          error?.response?.data?.error?.message ||
+          error?.message ||
+          "Não foi possível calcular as rotas. Tente novamente.";
+        setRouteError(message);
       }
     } finally {
       if (
@@ -292,6 +318,7 @@ export default function HomeScreen() {
   const handleExitRouteMode = () => {
     routeRequestRef.current += 1;
 
+    void navigation.stopNavigation();
     setIsCalculatingRoutes(false);
     setRouteError("");
     setIsRouteMode(false);
@@ -317,16 +344,9 @@ export default function HomeScreen() {
       return;
     }
 
-    // Os trechos enviados ainda não têm um serviço de navegação ativa.
-    const message =
-      `Rota selecionada: ${route.label}. ` +
-      "O acompanhamento em tempo real ainda não está integrado nesta tela.";
-
-    if (Platform.OS === "web") {
-      window.alert(message);
-    } else {
-      Alert.alert("Rota selecionada", message);
-    }
+    const destTitle =
+      selectedAddressInfo?.label.split(",")[0] || "Destino";
+    void navigation.startNavigation(route, destTitle);
   };
 
   const handleRecentralizeGps = () => {
@@ -406,6 +426,9 @@ export default function HomeScreen() {
 
   const [supportLocations, setSupportLocations] =
     useState<SupportLocation[]>([]);
+  const [sspReports, setSspReports] = useState<DangerReport[]>([]);
+  const [selectedSspReport, setSelectedSspReport] =
+    useState<DangerReport | null>(null);
 
   const lastFetchedCoordsRef = useRef<Coordinates | null>(null);
   const supportCacheRef = useRef<SupportLocation[]>([]);
@@ -483,6 +506,17 @@ export default function HomeScreen() {
         .finally(() => {
           isFetchingSupportRef.current = false;
         });
+
+      riskZonesService
+        .getNearby(coordinates)
+        .then((zones) => {
+          if (active) {
+            setSspReports(riskZonesService.toDangerReports(zones));
+          }
+        })
+        .catch(() => {
+          // Zonas são complementares; não bloqueia o mapa em caso de falha transitória
+        });
     }, 400);
 
     return () => {
@@ -494,6 +528,23 @@ export default function HomeScreen() {
     currentCoords.longitude,
     haversineDistanceM,
   ]);
+
+  const combinedReports = useMemo(
+    () => [...reportFlow.reports, ...sspReports],
+    [reportFlow.reports, sspReports],
+  );
+
+  const handleSelectMapReport = useCallback(
+    (report: DangerReport) => {
+      if (report.id.startsWith("ssp-")) {
+        setSelectedSspReport(report);
+      } else {
+        setSelectedSspReport(null);
+        reportFlow.selectReport(report);
+      }
+    },
+    [reportFlow],
+  );
 
   return (
     <SafeAreaView
@@ -531,26 +582,28 @@ export default function HomeScreen() {
             selectedRouteId={selectedRouteId}
             mapStyle={mapStyle}
             supportLocations={supportLocations}
-            reports={reportFlow.reports}
+            reports={combinedReports}
             onMapPress={handleMapClick}
-            onSelectReport={reportFlow.selectReport}
+            onSelectReport={handleSelectMapReport}
           />
         </View>
 
         {isRouteMode ? (
-          <RoutePlanningBar
-            originLabel={
-              location
-                ? "Localização atual (GPS)"
-                : "Localização indisponível"
-            }
-            destinationLabel={
-              selectedAddressInfo?.label.split(",")[0] || "Destino"
-            }
-            onClose={handleExitRouteMode}
-            onEditDestination={() => setIsSearchModalOpen(true)}
-            onStartRoute={handleStartNavigation}
-          />
+          navigation.isNavigating && navigation.activeRoute ? null : (
+            <RoutePlanningBar
+              originLabel={
+                location
+                  ? "Localização atual (GPS)"
+                  : "Localização indisponível"
+              }
+              destinationLabel={
+                selectedAddressInfo?.label.split(",")[0] || "Destino"
+              }
+              onClose={handleExitRouteMode}
+              onEditDestination={() => setIsSearchModalOpen(true)}
+              onStartRoute={handleStartNavigation}
+            />
+          )
         ) : (
           <View style={styles.topBar}>
             <TouchableOpacity
@@ -837,8 +890,11 @@ export default function HomeScreen() {
         )}
 
         <DangerPointDetailsModal
-          report={reportFlow.selectedReport}
-          onClose={reportFlow.closeDetails}
+          report={selectedSspReport ?? reportFlow.selectedReport}
+          onClose={() => {
+            setSelectedSspReport(null);
+            reportFlow.closeDetails();
+          }}
           onToggleConfirmation={reportFlow.toggleConfirmation}
           onAddComment={reportFlow.addComment}
         />
@@ -987,17 +1043,28 @@ export default function HomeScreen() {
           </View>
         )}
 
-        {isRouteMode && (
-          <RouteOptionsBottomSheet
-            routes={calculatedRoutes}
-            selectedRouteId={selectedRouteId}
-            onSelectRoute={setSelectedRouteId}
-            loading={isCalculatingRoutes}
-            exceeds30Percent={
-              routeComparison?.exceeds_30_percent
-            }
-          />
-        )}
+        {isRouteMode &&
+          (navigation.isNavigating && navigation.activeRoute ? (
+            <ActiveNavigationOverlay
+              route={navigation.activeRoute}
+              destinationLabel={navigation.destinationLabel}
+              progress={navigation.progress}
+              backgroundNotice={navigation.backgroundNotice}
+              onStopNavigation={() => {
+                void navigation.stopNavigation();
+              }}
+            />
+          ) : (
+            <RouteOptionsBottomSheet
+              routes={calculatedRoutes}
+              selectedRouteId={selectedRouteId}
+              onSelectRoute={setSelectedRouteId}
+              loading={isCalculatingRoutes}
+              exceeds30Percent={
+                routeComparison?.exceeds_30_percent
+              }
+            />
+          ))}
 
         <AddressSearchModal
           visible={isSearchModalOpen}

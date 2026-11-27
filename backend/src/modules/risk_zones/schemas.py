@@ -6,7 +6,6 @@ from uuid import UUID
 
 from pydantic import UUID4, BaseModel
 from src.modules.comments.schemas import PageMeta
-from src.modules.reports.models import ReportCategory
 from src.modules.risk_zones.service import RiskZone, ZoneIncident
 
 
@@ -27,7 +26,7 @@ class MultiPolygonGeometry(BaseModel):
 
 class ZoneProperties(BaseModel):
     marker_location: PointGeometry
-    categories: list[ReportCategory]
+    categories: list[str]
     sources: list[Literal["app", "ssp"]]
     incidents_count: int
 
@@ -69,7 +68,7 @@ class ZoneResponse(BaseModel):
 class IncidentRead(BaseModel):
     id: UUID4
     source: Literal["app", "ssp"]
-    category: ReportCategory
+    category: str
     location: PointGeometry
     description: str | None
     incident_date: date

@@ -57,7 +57,11 @@ def test_dedup_latest_version_and_normalization():
             {"LOGRADOURO": "VEDAÇÃO DA DIVULGAÇÃO DOS DADOS RELATIVOS"},
             "protected_location",
         ),
-        ({"RUBRICA": "Roubo (art. 157)"}, "unsupported_nature"),
+        ({"RUBRICA": "tráfico drogas (Art.33, caput)"}, "unsupported_nature"),
+        (
+            {"RUBRICA": "Lesão corporal culposa na direção de veículo automotor (Art. 303)"},
+            "unsupported_nature",
+        ),
     ],
 )
 def test_rejected_rows(changes, reason):
@@ -65,6 +69,23 @@ def test_rejected_rows(changes, reason):
     item = next(iter(candidates.values()))
     assert item.rejection == reason
     assert counts[reason] == 1
+
+
+@pytest.mark.parametrize(
+    ("rubrica", "expected_category"),
+    [
+        ("Furto (art. 155)", "Furto"),
+        ("Roubo (art. 157)", "Roubo"),
+        ("Lesão corporal (art. 129)", "Violência"),
+        ("Feminicídio", "Violência"),
+    ],
+)
+def test_accepted_street_crime_categories(rubrica, expected_category):
+    candidates, counts = parse_csv(content(row(RUBRICA=rubrica)), BOUNDARY)
+    item = next(iter(candidates.values()))
+    assert item.rejection is None
+    assert item.category == expected_category
+    assert counts["accepted"] == 1
 
 
 def test_latest_conflict_not_arbitrarily_selected():

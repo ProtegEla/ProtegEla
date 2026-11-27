@@ -10,9 +10,10 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { BottomNavigation } from '../src/components/ui/BottomNavigation';
 
 type Props = {
-  onClose: () => void;
+  onClose?: () => void;
 };
 
 const PHONES = [
@@ -50,6 +51,16 @@ const PHONES = [
 ];
 
 export default function UsefulPhonesScreen({ onClose }: Props) {
+  function handleClose() {
+    if (onClose) {
+      onClose();
+    } else if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/');
+    }
+  }
+
   async function openDialer(number: string) {
     try {
       await Linking.openURL(`tel:${number}`);
@@ -70,7 +81,7 @@ export default function UsefulPhonesScreen({ onClose }: Props) {
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Fechar telefones úteis"
-              onPress={() => router.back()}
+              onPress={handleClose}
               style={({ pressed }) => [s.close, pressed && s.pressed]}
             >
               <Text style={s.closeText}>X</Text>
@@ -125,6 +136,22 @@ export default function UsefulPhonesScreen({ onClose }: Props) {
           </View>
         </View>
       </ScrollView>
+
+      {/* Barra Inferior Persistente com Botão de Emergência (RF14) */}
+      <BottomNavigation
+        activeTab="telefones"
+        onTabPress={(tab) => {
+          if (tab === 'telefones') return;
+          router.push(
+            tab === 'delegacias'
+              ? '/delegacias'
+              : tab === 'orientacoes'
+                ? '/orientacoes'
+                : '/',
+          );
+        }}
+        onPanicPress={() => router.push('/emergency')}
+      />
     </SafeAreaView>
   );
 }

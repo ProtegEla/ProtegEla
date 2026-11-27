@@ -28,7 +28,20 @@ describe("routesService", () => {
               },
               distance_m: 1900,
               duration_s: 1080, // 18 min
-              legs: [],
+              legs: [
+                {
+                  distance_m: 1900,
+                  duration_s: 1080,
+                  steps: [
+                    {
+                      instruction: "Vire à direita na Rua Augusta",
+                      distance_m: 1900,
+                      duration_s: 1080,
+                      way_points: [0, 1],
+                    },
+                  ],
+                },
+              ],
               risk: {
                 status: "evaluated",
                 exposure_score: 20,
@@ -92,5 +105,7 @@ describe("routesService", () => {
       latitude: -23.5505,
       longitude: -46.6333,
     });
+    expect(fastest?.steps).toHaveLength(1);
+    expect(fastest?.steps[0].instruction).toBe("Vire à direita na Rua Augusta");
   });
 });

@@ -69,7 +69,9 @@ export function DangerPointDetailsModal({
   const badgeColor =
     report.category === "Violência"
       ? "#EC2027"
-      : category.color;
+      : report.category === "Roubo"
+        ? "#EA580C"
+        : category.color;
 
   const comments = report.comments.filter(
     (comment) => !comment.parentId,
@@ -96,13 +98,7 @@ export function DangerPointDetailsModal({
   }
 
   return (
-    <Modal
-      visible
-      transparent
-      animationType="slide"
-      statusBarTranslucent
-      onRequestClose={onClose}
-    >
+    <View style={s.modalContainer} pointerEvents="box-none">
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={
@@ -485,11 +481,19 @@ export function DangerPointDetailsModal({
           </View>
         </View>
       </KeyboardAvoidingView>
-    </Modal>
+    </View>
   );
 }
 
 const s = StyleSheet.create({
+  modalContainer: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 45,
+  },
   overlay: {
     flex: 1,
     justifyContent: "flex-end",
