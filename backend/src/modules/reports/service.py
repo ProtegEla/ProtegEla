@@ -253,7 +253,7 @@ class ReportService:
                 counts = dict(result.all())
                 confirmations = counts.get(ReportInteractionKind.CONFIRMATION, 0)
                 abuses = counts.get(ReportInteractionKind.ABUSE, 0)
-                if 10 * abuses > 3 * confirmations:
+                if abuses >= 3 and 10 * abuses > 3 * confirmations:
                     report.is_hidden = True
             await self.session.commit()
         except Exception:

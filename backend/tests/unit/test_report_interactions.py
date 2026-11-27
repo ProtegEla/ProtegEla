@@ -93,7 +93,15 @@ async def test_repeated_interaction_has_no_new_writes(
 @pytest.mark.anyio
 @pytest.mark.parametrize(
     "confirmations, abuses, hidden",
-    [(0, 1, True), (3, 1, True), (10, 3, False), (10, 4, True)],
+    [
+        (0, 1, False),
+        (0, 2, False),
+        (0, 3, True),
+        (3, 1, False),
+        (3, 3, True),
+        (10, 3, False),
+        (10, 4, True),
+    ],
 )
 async def test_abuse_applies_exact_threshold(
     session: Mock, report: Report, confirmations: int, abuses: int, hidden: bool

@@ -29,7 +29,9 @@
         "ACCESS_FINE_LOCATION",
         "ACCESS_BACKGROUND_LOCATION",
         "FOREGROUND_SERVICE",
-        "CALL_PHONE"
+        "CALL_PHONE",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
       ]
     },
     "web": {
@@ -45,6 +47,14 @@
           "locationAlwaysAndWhenInUsePermission": "Permite que o ProtegEla envie alertas de segurança ao se aproximar de áreas perigosas durante o trajeto (RNF04)."
         }
       ]
-    ]
+    ],
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "df92861e-fa75-4135-99e4-12b4858a7557"
+      }
+    }
   }
 }
