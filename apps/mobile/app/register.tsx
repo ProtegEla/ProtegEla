@@ -12,6 +12,7 @@ import { useRouter } from "expo-router";
 import { theme, useAppTheme } from "../src/theme";
 import { Button, Input, LinkText } from "../src/components/ui";
 import { useAuth } from "../src/features/auth/AuthContext";
+import { authService } from "../src/services/api/auth";
 
 /**
  * Tela de Cadastro ("Criar conta") - RF01.
@@ -57,10 +58,7 @@ export default function RegisterScreen() {
     }
 
     const rawPhone = phone.replace(/\D/g, "");
-    if (!rawPhone) {
-      setPhoneError("Informe seu telefone");
-      isValid = false;
-    } else if (rawPhone.length < 10) {
+    if (rawPhone && rawPhone.length < 10) {
       setPhoneError("Telefone inválido");
       isValid = false;
     }
@@ -83,10 +81,15 @@ export default function RegisterScreen() {
       const hasNumber = /[0-9]/.test(password);
       const hasSpecial = /[^A-Za-z0-9]/.test(password);
 
-      if (!hasMinLength || !hasUpper || !hasLower || !hasNumber || !hasSpecial) {
-        setPasswordError(
-          "A senha deve ter no mínimo 8 caracteres, incluindo maiúscula, minúscula, número e símbolo (RN08)."
-        );
+      const missing: string[] = [];
+      if (!hasMinLength) missing.push("mínimo de 8 caracteres");
+      if (!hasUpper) missing.push("1 letra maiúscula");
+      if (!hasLower) missing.push("1 letra minúscula");
+      if (!hasNumber) missing.push("1 número");
+      if (!hasSpecial) missing.push("1 símbolo (ex: !@#$%)");
+
+      if (missing.length > 0) {
+        setPasswordError(`Senha inválida. Falta: ${missing.join(", ")}.`);
         isValid = false;
       }
     }
@@ -98,11 +101,72 @@ export default function RegisterScreen() {
     if (!validateForm()) return;
 
     setLoading(true);
-    setTimeout(() => {
+    try {
+      const normalizedEmail = email.trim();
+      const normalizedName = nickname.trim();
+      const rawPhone = phone.replace(/\D/g, "");
+      await authService.register({
+        username: normalizedName,
+        email: normalizedEmail,
+        password,
+        emergency_contacts: rawPhone
+          ? [
+            {
+              name: normalizedName,
+              phone: rawPhone,
+              is_primary: true,
+            },
+          ]
+          : [],
+      });
+      await authService.login({ email: normalizedEmail, password });
+      login(normalizedName, normalizedEmail);
+      router.replace("/");
+    } catch (error: any) {
+      const details = Array.isArray(error?.details) ? error.details : [];
+      let handledField = false;
+      const fallbackIssues: string[] = [];
+
+      for (const item of details) {
+        const field = String(item?.field || "").toLowerCase();
+        const rawIssue = String(item?.issue || item?.msg || "").trim();
+        const issue = rawIssue.replace(/^Value error,\s*/i, "");
+        if (!issue) continue;
+
+        if (field.includes("username") || field.includes("nickname")) {
+          setNicknameError(issue);
+          handledField = true;
+        } else if (field.includes("email")) {
+          setEmailError(issue);
+          handledField = true;
+        } else if (field.includes("password")) {
+          setPasswordError(issue);
+          handledField = true;
+        } else if (field.includes("phone") || field.includes("emergency_contacts")) {
+          setPhoneError(issue);
+          handledField = true;
+        } else {
+          fallbackIssues.push(issue);
+        }
+      }
+
+      if (!handledField) {
+        const msg =
+          fallbackIssues.join(" ") ||
+          error?.message ||
+          "Não foi possível concluir o cadastro.";
+        const lower = msg.toLowerCase();
+        if (lower.includes("e-mail") || lower.includes("email")) {
+          setEmailError(msg);
+        } else if (lower.includes("apelido") || lower.includes("usuário") || lower.includes("username")) {
+          setNicknameError(msg);
+        } else {
+          setPasswordError(msg);
+        }
+      }
+    } finally {
       setLoading(false);
-      login(nickname.trim(), email.trim());
-      router.push("/");
-    }, 200);
+    }
   };
 
   return (
@@ -134,7 +198,7 @@ export default function RegisterScreen() {
             />
 
             <Input
-              placeholder="Telefone"
+              placeholder="Contato de emergência (opcional)"
               value={phone}
               onChangeText={(text) => {
                 setPhone(formatPhone(text));

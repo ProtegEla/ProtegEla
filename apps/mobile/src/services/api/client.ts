@@ -85,6 +85,44 @@ export function normalizeApiError(error: unknown): ApiError {
 }
 
 const DEVICE_KEY = "@protegela:device_id";
+const API_BASE_URL_KEY = "@protegela:api_base_url";
+const DEFAULT_API_BASE_URL =
+  process.env.EXPO_PUBLIC_API_BASE_URL || "http://localhost:8000/api/v1";
+
+let apiBaseUrlPromise: Promise<string | null> | null = null;
+
+export function getDefaultApiBaseUrl(): string {
+  return DEFAULT_API_BASE_URL;
+}
+
+export function normalizeApiBaseUrl(rawUrl: string): string {
+  const trimmed = rawUrl.trim().replace(/\/+$/, "");
+  if (!trimmed) return DEFAULT_API_BASE_URL;
+  return /\/api\/v1$/i.test(trimmed) ? trimmed : `${trimmed}/api/v1`;
+}
+
+export async function getEffectiveApiBaseUrl(): Promise<string> {
+  const saved = await AsyncStorage.getItem(API_BASE_URL_KEY).catch(() => null);
+  if (saved && saved.trim()) {
+    return normalizeApiBaseUrl(saved);
+  }
+  return DEFAULT_API_BASE_URL;
+}
+
+export async function setCustomApiBaseUrl(rawUrl: string): Promise<string> {
+  const normalized = normalizeApiBaseUrl(rawUrl);
+  await AsyncStorage.setItem(API_BASE_URL_KEY, normalized);
+  apiBaseUrlPromise = Promise.resolve(normalized);
+  apiClient.defaults.baseURL = normalized;
+  return normalized;
+}
+
+export async function resetCustomApiBaseUrl(): Promise<string> {
+  await AsyncStorage.removeItem(API_BASE_URL_KEY);
+  apiBaseUrlPromise = Promise.resolve(null);
+  apiClient.defaults.baseURL = DEFAULT_API_BASE_URL;
+  return DEFAULT_API_BASE_URL;
+}
 
 const UUID4 =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -139,10 +177,8 @@ export async function requireAccessToken() {
 }
 
 export const apiClient = axios.create({
-  baseURL:
-    process.env.EXPO_PUBLIC_API_BASE_URL ||
-    "http://localhost:8000/api/v1",
-  timeout: 8000,
+  baseURL: DEFAULT_API_BASE_URL,
+  timeout: 25000,
   headers: {
     "Content-Type": "application/json",
     Accept: "application/json",
@@ -150,6 +186,18 @@ export const apiClient = axios.create({
 });
 
 apiClient.interceptors.request.use(async (config) => {
+  if (!apiBaseUrlPromise) {
+    apiBaseUrlPromise = AsyncStorage.getItem(API_BASE_URL_KEY).catch(
+      () => null,
+    );
+  }
+  const savedBaseUrl = await apiBaseUrlPromise;
+  if (savedBaseUrl && savedBaseUrl.trim()) {
+    const normalized = normalizeApiBaseUrl(savedBaseUrl);
+    apiClient.defaults.baseURL = normalized;
+    config.baseURL = normalized;
+  }
+
   const token = await secureStore
     .getAccessToken()
     .catch(() => null);

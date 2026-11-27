@@ -1,12 +1,13 @@
 import logging
 import re
 import uuid
-from typing import List
+from typing import Annotated, List
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.database import get_db_session
+from src.modules.auth.dependencies import get_current_author
 from src.modules.auth.email import send_password_reset_email
-from src.modules.auth.service import login_with_rate_limit, register_user, request_password_reset, reset_password
+from src.modules.auth.service import change_password, login_with_rate_limit, register_user, request_password_reset, reset_password
 from fastapi import APIRouter, Depends, Request, status
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,11 @@ class ResetPasswordRequest(BaseModel):
     token: str = Field(min_length=1)
     new_password: str = Field(min_length=8, max_length=128)
 
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(min_length=1, repr=False)
+    new_password: str = Field(min_length=8, max_length=128, repr=False)
+
 class EmergencyContactIn(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     phone: str
@@ -59,7 +65,7 @@ class RegisterRequest(BaseModel):
     username: str = Field(min_length=3, max_length=50)
     email: str = Field(max_length=254)
     password: str = Field(max_length=128)
-    emergency_contacts: List[EmergencyContactIn] = Field(min_length=1, max_length=3)
+    emergency_contacts: List[EmergencyContactIn] = Field(default_factory=list, max_length=3)
 
     @field_validator("email")
     @classmethod
@@ -72,7 +78,7 @@ class RegisterRequest(BaseModel):
     @field_validator("emergency_contacts")
     @classmethod
     def validate_single_primary(cls, contacts: List[EmergencyContactIn]) -> List[EmergencyContactIn]:
-        if sum(1 for c in contacts if c.is_primary) != 1:
+        if contacts and sum(1 for c in contacts if c.is_primary) != 1:
             raise ValueError("Informe exatamente 1 contato de emergência principal.")
         return contacts
 
@@ -162,4 +168,27 @@ async def reset_password_endpoint(
 
     return {
         "message": "Senha redefinida com sucesso."
+    }
+
+
+@router.post(
+    "/change-password",
+    status_code=status.HTTP_200_OK,
+)
+async def change_password_endpoint(
+    data: ChangePasswordRequest,
+    user_id: Annotated[uuid.UUID, Depends(get_current_author)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+):
+    """Altera a senha da usuária autenticada."""
+
+    await change_password(
+        session,
+        user_id=user_id,
+        current_password=data.current_password,
+        new_password=data.new_password,
+    )
+
+    return {
+        "message": "Senha alterada com sucesso."
     }

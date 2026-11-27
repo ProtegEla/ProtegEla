@@ -14,6 +14,7 @@ import {
 
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useAppTheme } from "../../../theme";
 
 import {
   elapsed,
@@ -25,7 +26,8 @@ import {
 type Props = {
   report: DangerReport | null;
   onClose: () => void;
-  onToggleConfirmation: (id: string) => void;
+  onToggleConfirmation: (id: string) => Promise<string | void> | void;
+  onReportAbuse?: (id: string) => Promise<string | void> | void;
   onAddComment: (
     reportId: string,
     text: string,
@@ -44,13 +46,16 @@ export function DangerPointDetailsModal({
   report,
   onClose,
   onToggleConfirmation,
+  onReportAbuse,
   onAddComment,
 }: Props) {
   const insets = useSafeAreaInsets();
+  const { colors, isDark } = useAppTheme();
 
   const [message, setMessage] = useState("");
   const [replyTo, setReplyTo] =
     useState<ReportComment | null>(null);
+  const [interactionNotice, setInteractionNotice] = useState<string | null>(null);
 
   const [expanded, setExpanded] = useState<
     Record<string, boolean>
@@ -59,12 +64,22 @@ export function DangerPointDetailsModal({
   useEffect(() => {
     setMessage("");
     setReplyTo(null);
+    setInteractionNotice(null);
     setExpanded({});
   }, [report?.id]);
 
   if (!report) return null;
 
+  const isSsp = report.source === "ssp";
   const category = getCategoryStyle(report.category);
+  const formatRealDate = (isoDate?: string): string | null => {
+    if (!isoDate) return null;
+    const match = isoDate.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return match ? `${match[3]}/${match[2]}/${match[1]}` : null;
+  };
+  const realDate =
+    formatRealDate(report.incidentDate) ??
+    formatRealDate(report.createdAt);
 
   const badgeColor =
     report.category === "Violência"
@@ -76,6 +91,21 @@ export function DangerPointDetailsModal({
   const comments = report.comments.filter(
     (comment) => !comment.parentId,
   );
+
+  const theme = {
+    overlayBg: isDark ? "rgba(8, 5, 14, 0.65)" : "rgba(25, 18, 35, 0.35)",
+    sheetBg: isDark ? colors.surface : "#EAE4F2",
+    accent: isDark ? colors.profileTitlePurple : "#8554BB",
+    titleAccent: isDark ? colors.profileTitlePurple : "#A17ACB",
+    bodyText: isDark ? colors.text : "#465064",
+    authorText: isDark ? colors.text : "#4B5568",
+    mutedText: isDark ? colors.textMuted : "#81758E",
+    timestampText: isDark ? colors.textMuted : "#87909D",
+    closeIcon: isDark ? colors.textMuted : "#535968",
+    commentCardBg: isDark ? colors.inputBackground : "#F8FAFC",
+    myCommentCardBg: isDark ? "#342352" : "#CEC0DF",
+    inputBg: isDark ? colors.inputBackground : "#CEC0DF",
+  };
 
   function sendComment() {
     if (!report || !message.trim()) return;
@@ -109,6 +139,7 @@ export function DangerPointDetailsModal({
           style={[
             s.overlay,
             {
+              backgroundColor: theme.overlayBg,
               paddingTop: Math.max(insets.top, 12),
             },
           ]}
@@ -122,7 +153,7 @@ export function DangerPointDetailsModal({
 
           <View
             accessibilityViewIsModal
-            style={s.sheet}
+            style={[s.sheet, { backgroundColor: theme.sheetBg }]}
           >
             <View style={s.topRow}>
               <View
@@ -145,7 +176,7 @@ export function DangerPointDetailsModal({
                 <Ionicons
                   name="close-outline"
                   size={28}
-                  color="#535968"
+                  color={theme.closeIcon}
                 />
               </Pressable>
             </View>
@@ -157,23 +188,23 @@ export function DangerPointDetailsModal({
             >
               <Text
                 accessibilityRole="header"
-                style={s.address}
+                style={[s.address, { color: theme.accent }]}
               >
                 {report.address}
               </Text>
 
               {!!report.addressDetail && (
-                <Text style={s.addressDetail}>
+                <Text style={[s.addressDetail, { color: theme.accent }]}>
                   ({report.addressDetail})
                 </Text>
               )}
 
               <View style={s.descriptionSection}>
-                <Text style={s.sectionLabel}>
+                <Text style={[s.sectionLabel, { color: theme.accent }]}>
                   Descrição
                 </Text>
 
-                <Text style={s.description}>
+                <Text style={[s.description, { color: theme.bodyText }]}>
                   {report.description
                     ? `“${report.description}”`
                     : "Sem descrição adicional."}
@@ -183,12 +214,18 @@ export function DangerPointDetailsModal({
               <View style={s.metadata}>
                 <View style={s.metaItem}>
                   <Ionicons
-                    name="time-outline"
+                    name={isSsp ? "calendar-outline" : "time-outline"}
                     size={20}
-                    color="#8554BB"
+                    color={theme.accent}
                   />
-                  <Text style={s.metaText}>
-                    {elapsed(report.createdAt)}
+                  <Text style={[s.metaText, { color: theme.accent }]}>
+                    {isSsp
+                      ? realDate
+                        ? `Ocorrência em ${realDate}`
+                        : "Base oficial SSP-SP (2026)"
+                      : realDate
+                        ? `${realDate} · ${elapsed(report.createdAt)}`
+                        : elapsed(report.createdAt)}
                   </Text>
                 </View>
 
@@ -202,12 +239,12 @@ export function DangerPointDetailsModal({
                     <Ionicons
                       name="moon"
                       size={19}
-                      color="#8554BB"
+                      color={theme.accent}
                     />
                     <Text
                       style={[
                         s.metaText,
-                        { flex: 1 },
+                        { color: theme.accent, flex: 1 },
                       ]}
                     >
                       {PERIOD_DESCRIPTIONS[
@@ -218,53 +255,109 @@ export function DangerPointDetailsModal({
                 )}
               </View>
 
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={
-                  report.confirmedByMe
-                    ? "Desfazer minha confirmação"
-                    : "Confirmar este relato"
-                }
-                accessibilityState={{
-                  selected: report.confirmedByMe,
-                }}
-                onPress={() =>
-                  onToggleConfirmation(report.id)
-                }
-                style={s.confirmation}
-              >
-                <Ionicons
-                  name={
-                    report.confirmedByMe
-                      ? "thumbs-up"
-                      : "thumbs-up-outline"
-                  }
-                  size={17}
-                  color="#8554BB"
-                />
+              {isSsp ? (
+                <View style={s.confirmation}>
+                  <Ionicons
+                    name="shield-checkmark-outline"
+                    size={17}
+                    color={theme.accent}
+                  />
+                  <Text style={[s.metaText, { color: theme.accent }]}>
+                    {report.incidentsCount ?? report.confirmations_count}{" "}
+                    {(report.incidentsCount ?? report.confirmations_count) === 1
+                      ? "ocorrência oficial registrada neste ponto"
+                      : "ocorrências oficiais registradas neste ponto"}
+                  </Text>
+                </View>
+              ) : (
+                <View>
+                  <View style={s.interactionRow}>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={
+                        report.confirmedByMe
+                          ? "Desfazer minha confirmação"
+                          : "Confirmar este relato"
+                      }
+                      accessibilityState={{
+                        selected: report.confirmedByMe,
+                      }}
+                      onPress={async () => {
+                        setInteractionNotice(null);
+                        const feedback = await onToggleConfirmation(report.id);
+                        if (typeof feedback === "string" && feedback) {
+                          setInteractionNotice(feedback);
+                        }
+                      }}
+                      style={s.confirmation}
+                    >
+                      <Ionicons
+                        name={
+                          report.confirmedByMe
+                            ? "thumbs-up"
+                            : "thumbs-up-outline"
+                        }
+                        size={17}
+                        color={theme.accent}
+                      />
 
-                <Text style={s.metaText}>
-                  {report.confirmations_count}{" "}
-                  {report.confirmations_count === 1
-                    ? "confirmação"
-                    : "confirmações"}
-                  {report.confirmedByMe
-                    ? " · você confirmou"
-                    : ""}
-                </Text>
-              </Pressable>
+                      <Text style={[s.metaText, { color: theme.accent }]}>
+                        {report.confirmations_count}{" "}
+                        {report.confirmations_count === 1
+                          ? "confirmação"
+                          : "confirmações"}
+                        {report.confirmedByMe
+                          ? " · você confirmou"
+                          : ""}
+                      </Text>
+                    </Pressable>
 
-              <Text
-                accessibilityRole="header"
-                style={s.commentsTitle}
-              >
-                Comentários
-              </Text>
+                    {!!onReportAbuse && (
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Denunciar este relato"
+                        onPress={async () => {
+                          setInteractionNotice(null);
+                          const feedback = await onReportAbuse(report.id);
+                          if (typeof feedback === "string" && feedback) {
+                            setInteractionNotice(feedback);
+                          }
+                        }}
+                        style={s.abuseBtn}
+                      >
+                        <Ionicons
+                          name="flag-outline"
+                          size={15}
+                          color="#DC2626"
+                        />
+                        <Text style={s.abuseBtnText}>Denunciar</Text>
+                      </Pressable>
+                    )}
+                  </View>
 
-              {!comments.length && (
-                <Text style={s.emptyText}>
-                  Ainda não há comentários.
-                </Text>
+                  {!!interactionNotice && (
+                    <Text style={[s.interactionNotice, { color: theme.mutedText }]}>
+                      {interactionNotice}
+                    </Text>
+                  )}
+                </View>
+              )}
+
+              {!isSsp && (
+                <>
+                  <Text
+                    accessibilityRole="header"
+                    style={[s.commentsTitle, { color: theme.titleAccent }]}
+                  >
+                    Comentários
+                  </Text>
+
+                  {!comments.length && (
+                    <Text style={[s.emptyText, { color: theme.mutedText }]}>
+                      Ainda não há comentários.
+                    </Text>
+                  )}
+                </>
               )}
 
               {comments.map((comment) => {
@@ -286,24 +379,25 @@ export function DangerPointDetailsModal({
                     key={comment.id}
                     style={[
                       s.commentCard,
-                      isMine && s.myCommentCard,
+                      { backgroundColor: theme.commentCardBg },
+                      isMine && { backgroundColor: theme.myCommentCardBg },
                     ]}
                   >
                     <View style={s.authorRow}>
-                      <Text style={s.author}>
+                      <Text style={[s.author, { color: theme.authorText }]}>
                         {isMine
                           ? "Você"
                           : comment.author}
                       </Text>
 
-                      <Text style={s.timestamp}>
+                      <Text style={[s.timestamp, { color: theme.timestampText }]}>
                         {elapsed(
                           comment.createdAt,
                         ).toLowerCase()}
                       </Text>
                     </View>
 
-                    <Text style={s.commentText}>
+                    <Text style={[s.commentText, { color: theme.bodyText }]}>
                       {comment.text}
                     </Text>
 
@@ -318,17 +412,17 @@ export function DangerPointDetailsModal({
                             <Ionicons
                               name="return-down-forward"
                               size={17}
-                              color="#87909D"
+                              color={theme.timestampText}
                             />
 
-                            <Text style={s.author}>
+                            <Text style={[s.author, { color: theme.authorText }]}>
                               {reply.isMine
                                 ? "Você"
                                 : reply.author}
                             </Text>
 
                             <Text
-                              style={s.timestamp}
+                              style={[s.timestamp, { color: theme.timestampText }]}
                             >
                               {elapsed(
                                 reply.createdAt,
@@ -337,7 +431,7 @@ export function DangerPointDetailsModal({
                           </View>
 
                           <Text
-                            style={s.replyText}
+                            style={[s.replyText, { color: theme.bodyText }]}
                           >
                             {reply.text}
                           </Text>
@@ -365,7 +459,7 @@ export function DangerPointDetailsModal({
                           style={s.textButton}
                         >
                           <Text
-                            style={s.actionText}
+                            style={[s.actionText, { color: theme.authorText }]}
                           >
                             {showReplies
                               ? "Ocultar respostas"
@@ -383,7 +477,7 @@ export function DangerPointDetailsModal({
                         style={s.textButton}
                       >
                         <Text
-                          style={s.actionText}
+                          style={[s.actionText, { color: theme.authorText }]}
                         >
                           Responder
                         </Text>
@@ -398,6 +492,7 @@ export function DangerPointDetailsModal({
               style={[
                 s.footer,
                 {
+                  backgroundColor: theme.sheetBg,
                   paddingBottom: Math.max(
                     insets.bottom,
                     22,
@@ -408,7 +503,7 @@ export function DangerPointDetailsModal({
               {replyTo && (
                 <View style={s.replyBanner}>
                   <Text
-                    style={s.replyBannerText}
+                    style={[s.replyBannerText, { color: theme.accent }]}
                   >
                     Respondendo a{" "}
                     {replyTo.author}
@@ -425,58 +520,70 @@ export function DangerPointDetailsModal({
                     <Ionicons
                       name="close"
                       size={17}
-                      color="#8554BB"
+                      color={theme.accent}
                     />
                   </Pressable>
                 </View>
               )}
 
-              <View style={s.composer}>
-                <TextInput
-                  accessibilityLabel={
-                    replyTo
-                      ? "Escrever resposta"
-                      : "Escrever comentário"
-                  }
-                  value={message}
-                  onChangeText={setMessage}
-                  placeholder={
-                    replyTo
-                      ? "Adicionar resposta..."
-                      : "Adicionar comentário..."
-                  }
-                  placeholderTextColor="#81758E"
-                  multiline
-                  maxLength={500}
-                  style={s.input}
-                />
-
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={
-                    replyTo
-                      ? "Enviar resposta"
-                      : "Enviar comentário"
-                  }
-                  disabled={!message.trim()}
-                  onPress={sendComment}
-                  style={({ pressed }) => [
-                    s.send,
-                    !message.trim() && {
-                      opacity: 0.65,
-                    },
-                    pressed && {
-                      opacity: 0.8,
-                    },
-                  ]}
-                >
-                  <Ionicons
-                    name="arrow-up"
-                    size={26}
-                    color="#FFFFFF"
+              {!isSsp ? (
+                <View style={s.composer}>
+                  <TextInput
+                    accessibilityLabel={
+                      replyTo
+                        ? "Escrever resposta"
+                        : "Escrever comentário"
+                    }
+                    value={message}
+                    onChangeText={setMessage}
+                    placeholder={
+                      replyTo
+                        ? "Adicionar resposta..."
+                        : "Adicionar comentário..."
+                    }
+                    placeholderTextColor={theme.mutedText}
+                    multiline
+                    maxLength={500}
+                    style={[
+                      s.input,
+                      {
+                        backgroundColor: theme.inputBg,
+                        color: theme.bodyText,
+                      },
+                    ]}
                   />
-                </Pressable>
-              </View>
+
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                      replyTo
+                        ? "Enviar resposta"
+                        : "Enviar comentário"
+                    }
+                    disabled={!message.trim()}
+                    onPress={sendComment}
+                    style={({ pressed }) => [
+                      s.send,
+                      !message.trim() && {
+                        opacity: 0.65,
+                      },
+                      pressed && {
+                        opacity: 0.8,
+                      },
+                    ]}
+                  >
+                    <Ionicons
+                      name="arrow-up"
+                      size={26}
+                      color="#FFFFFF"
+                    />
+                  </Pressable>
+                </View>
+              ) : (
+                <Text style={[s.emptyText, { color: theme.mutedText }]}>
+                  Dados oficiais da SSP-SP são apenas informativos e não recebem comentários.
+                </Text>
+              )}
             </View>
           </View>
         </View>
@@ -590,6 +697,32 @@ const s = StyleSheet.create({
     alignItems: "center",
     gap: 10,
     marginTop: 3,
+  },
+  interactionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  abuseBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(220, 38, 38, 0.35)",
+  },
+  abuseBtnText: {
+    color: "#DC2626",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  interactionNotice: {
+    fontSize: 12,
+    marginTop: 4,
+    lineHeight: 17,
   },
   commentsTitle: {
     color: "#A17ACB",

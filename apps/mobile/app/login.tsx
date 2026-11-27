@@ -7,11 +7,14 @@ import {
   Platform,
   ScrollView,
   Alert,
+  Modal,
+  TouchableOpacity,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { theme, useAppTheme } from "../src/theme";
 import { Button, Input, Checkbox, LinkText } from "../src/components/ui";
 import { useAuth } from "../src/features/auth/AuthContext";
+import { authService } from "../src/services/api/auth";
 
 /**
  * Tela de Login ("Bem-vinda!") - RF02.
@@ -30,6 +33,16 @@ export default function LoginScreen() {
   // Estados de erro
   const [emailError, setEmailError] = useState("");
   const [passwordError, setPasswordError] = useState("");
+
+  // Recuperação de senha
+  const [isForgotOpen, setIsForgotOpen] = useState(false);
+  const [forgotStep, setForgotStep] = useState<"email" | "reset">("email");
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [resetToken, setResetToken] = useState("");
+  const [resetNewPassword, setResetNewPassword] = useState("");
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotMessage, setForgotMessage] = useState("");
+  const [forgotError, setForgotError] = useState("");
 
   const validateForm = (): boolean => {
     let isValid = true;
@@ -56,15 +69,111 @@ export default function LoginScreen() {
     if (!validateForm()) return;
 
     setLoading(true);
-    setTimeout(() => {
+    try {
+      const normalizedEmail = email.trim();
+      await authService.login({ email: normalizedEmail, password });
+      const fallbackNickname = normalizedEmail.split("@")[0] || "Usuária";
+      login(fallbackNickname, normalizedEmail);
+      router.replace("/");
+    } catch (error: any) {
+      const details = Array.isArray(error?.details) ? error.details : [];
+      let handledField = false;
+
+      for (const item of details) {
+        const field = String(item?.field || "").toLowerCase();
+        const rawIssue = String(item?.issue || item?.msg || "").trim();
+        const issue = rawIssue.replace(/^Value error,\s*/i, "");
+        if (!issue) continue;
+
+        if (field.includes("email")) {
+          setEmailError(issue);
+          handledField = true;
+        } else if (field.includes("password")) {
+          setPasswordError(issue);
+          handledField = true;
+        }
+      }
+
+      if (!handledField) {
+        const msg =
+          error?.message || "E-mail ou senha inválidos. Tente novamente.";
+        setPasswordError(msg);
+      }
+    } finally {
       setLoading(false);
-      login("Maria", email.trim() || "maria.lopez@gmail.com");
-      router.push("/");
-    }, 200);
+    }
   };
 
   const handleForgotPassword = () => {
-    Alert.alert("Recuperar Senha", "Instruções serão enviadas para o seu e-mail.");
+    setForgotEmail(email.trim());
+    setResetToken("");
+    setResetNewPassword("");
+    setForgotMessage("");
+    setForgotError("");
+    setForgotStep("email");
+    setIsForgotOpen(true);
+  };
+
+  const handleSendResetEmail = async () => {
+    const trimmed = forgotEmail.trim();
+    if (!trimmed || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      setForgotError("Digite um e-mail válido.");
+      return;
+    }
+    setForgotLoading(true);
+    setForgotError("");
+    setForgotMessage("");
+    try {
+      const res = await authService.forgotPassword(trimmed);
+      setForgotMessage(
+        res?.message ||
+        "Se o e-mail estiver cadastrado, você receberá um link para redefinir sua senha."
+      );
+      setForgotStep("reset");
+    } catch (error: any) {
+      setForgotError(
+        error?.message || "Não foi possível enviar o e-mail de recuperação."
+      );
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+
+  const handleConfirmResetPassword = async () => {
+    if (!resetToken.trim()) {
+      setForgotError("Informe o token recebido por e-mail.");
+      return;
+    }
+    if (resetNewPassword.length < 8) {
+      setForgotError(
+        "A nova senha deve ter no mínimo 8 caracteres, incluindo maiúscula, minúscula, número e símbolo."
+      );
+      return;
+    }
+    setForgotLoading(true);
+    setForgotError("");
+    setForgotMessage("");
+    try {
+      const res = await authService.resetPassword(
+        resetToken.trim(),
+        resetNewPassword
+      );
+      Alert.alert(
+        "Senha redefinida",
+        res?.message || "Sua senha foi alterada com sucesso."
+      );
+      setIsForgotOpen(false);
+    } catch (error: any) {
+      const details = Array.isArray(error?.details) ? error.details : [];
+      const firstIssue = details[0]?.issue
+        ? String(details[0].issue).replace(/^Value error,\s*/i, "")
+        : "";
+      setForgotError(
+        firstIssue || error?.message || "Não foi possível redefinir a senha."
+      );
+    } finally {
+      setForgotLoading(false);
+    }
   };
 
   return (
@@ -156,6 +265,110 @@ export default function LoginScreen() {
           </View>
         </View>
       </ScrollView>
+
+      <Modal
+        visible={isForgotOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsForgotOpen(false)}
+      >
+        <View style={styles.forgotBackdrop}>
+          <View
+            style={[
+              styles.forgotCard,
+              {
+                backgroundColor: colors.surface,
+                borderColor: colors.border,
+              },
+            ]}
+          >
+            <View style={styles.forgotHeader}>
+              <Text style={[styles.forgotTitle, { color: colors.text }]}>
+                Recuperar senha
+              </Text>
+              <TouchableOpacity onPress={() => setIsForgotOpen(false)}>
+                <Text style={[styles.forgotClose, { color: colors.textMuted }]}>
+                  X
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {forgotStep === "email" ? (
+              <>
+                <Text style={[styles.forgotHint, { color: colors.textMuted }]}>
+                  Informe seu e-mail cadastrado para receber o token de redefinição.
+                </Text>
+                <Input
+                  placeholder="E-mail"
+                  value={forgotEmail}
+                  onChangeText={setForgotEmail}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                {!!forgotError && (
+                  <Text style={styles.forgotErrorText}>{forgotError}</Text>
+                )}
+                <Button
+                  title="Enviar e-mail"
+                  variant="primary"
+                  onPress={handleSendResetEmail}
+                  isLoading={forgotLoading}
+                />
+                <View style={{ marginTop: 10 }}>
+                  <LinkText
+                    text="Já tenho um token"
+                    underline
+                    onPress={() => {
+                      setForgotError("");
+                      setForgotStep("reset");
+                    }}
+                  />
+                </View>
+              </>
+            ) : (
+              <>
+                {!!forgotMessage && (
+                  <Text style={styles.forgotSuccessText}>{forgotMessage}</Text>
+                )}
+                <Input
+                  placeholder="Token recebido por e-mail"
+                  value={resetToken}
+                  onChangeText={setResetToken}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                <Input
+                  placeholder="Nova senha"
+                  value={resetNewPassword}
+                  onChangeText={setResetNewPassword}
+                  secureTextEntry
+                  autoCapitalize="none"
+                />
+                {!!forgotError && (
+                  <Text style={styles.forgotErrorText}>{forgotError}</Text>
+                )}
+                <Button
+                  title="Redefinir senha"
+                  variant="primary"
+                  onPress={handleConfirmResetPassword}
+                  isLoading={forgotLoading}
+                />
+                <View style={{ marginTop: 10 }}>
+                  <LinkText
+                    text="Reenviar e-mail"
+                    underline
+                    onPress={() => {
+                      setForgotError("");
+                      setForgotStep("email");
+                    }}
+                  />
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -219,6 +432,50 @@ const styles = StyleSheet.create({
   },
   backToMapText: {
     fontSize: theme.typography.sizes.sm,
+  },
+  forgotBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(15, 10, 26, 0.55)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  forgotCard: {
+    width: "100%",
+    maxWidth: 420,
+    borderRadius: 18,
+    borderWidth: 1,
+    padding: 20,
+  },
+  forgotHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  forgotTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+  },
+  forgotClose: {
+    fontSize: 16,
+    fontWeight: "700",
+    paddingHorizontal: 6,
+  },
+  forgotHint: {
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 12,
+  },
+  forgotErrorText: {
+    color: "#DC2626",
+    fontSize: 12,
+    marginBottom: 10,
+  },
+  forgotSuccessText: {
+    color: "#10B981",
+    fontSize: 12,
+    marginBottom: 10,
   },
 });
 

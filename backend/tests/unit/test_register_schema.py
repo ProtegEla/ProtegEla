@@ -30,19 +30,24 @@ def test_accepts_up_to_three_contacts_with_one_primary():
     assert len(RegisterRequest(**_payload(emergency_contacts=contacts)).emergency_contacts) == 3
 
 
+def test_accepts_zero_contacts():
+    """Contatos de emergência são opcionais no cadastro (fallback 190)."""
+    req = RegisterRequest(**_payload(emergency_contacts=[]))
+    assert req.emergency_contacts == []
+
+
 @pytest.mark.parametrize(
     "overrides",
     [
         {"email": "mariaemail.com"},
         {"email": "maria@email"},
         {"username": "ma"},
-        {"emergency_contacts": []},
         {"emergency_contacts": [{"name": str(i), "phone": "11987654321", "is_primary": i == 0} for i in range(4)]},
         {"emergency_contacts": [{"name": "A", "phone": "11987654321", "is_primary": True}, {"name": "B", "phone": "11987654322", "is_primary": True}]},
         {"emergency_contacts": [{"name": "A", "phone": "11987654321"}]},
         {"emergency_contacts": [{"name": "A", "phone": "1234", "is_primary": True}]},
     ],
-    ids=["email_sem_arroba", "email_sem_dominio", "username_curto", "sem_contatos", "4_contatos", "2_principais", "nenhum_principal", "telefone_invalido"],
+    ids=["email_sem_arroba", "email_sem_dominio", "username_curto", "4_contatos", "2_principais", "nenhum_principal", "telefone_invalido"],
 )
 def test_invalid_payload_is_rejected(overrides):
     """Dados fora das regras do RF01 são rejeitados pelo schema."""

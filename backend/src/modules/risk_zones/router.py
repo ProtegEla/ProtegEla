@@ -47,8 +47,17 @@ async def list_zone_incidents(
     service: Annotated[RiskZoneService, Depends(get_risk_zone_service)],
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+    lat: Annotated[float | None, Query(ge=-90, le=90)] = None,
+    lon: Annotated[float | None, Query(ge=-180, le=180)] = None,
 ) -> IncidentPage:
-    incidents, total = await service.incidents(zone_id, page=page, page_size=page_size)
+    bounds = (
+        (lon - 0.002, lat - 0.002, lon + 0.002, lat + 0.002)
+        if lat is not None and lon is not None
+        else None
+    )
+    incidents, total = await service.incidents(
+        zone_id, page=page, page_size=page_size, bounds=bounds
+    )
     return IncidentPage(
         data=[IncidentRead.from_incident(i) for i in incidents],
         meta=PageMeta(page=page, page_size=page_size, total_records=total),

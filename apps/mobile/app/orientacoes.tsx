@@ -12,6 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { BottomNavigation } from '../src/components/ui/BottomNavigation';
+import { useAppTheme } from '../src/theme';
 
 type Props = {
   onClose: () => void;
@@ -42,6 +43,8 @@ const GUIDANCE = [
 ];
 
 export default function GuidanceScreen({ onClose }: Props) {
+  const { colors, isDark } = useAppTheme();
+
   async function openPhone() {
     try {
       await Linking.openURL('tel:190');
@@ -53,8 +56,27 @@ export default function GuidanceScreen({ onClose }: Props) {
     }
   }
 
+  const themeStyles = {
+    screen: { backgroundColor: isDark ? '#2A1B46' : '#7450A5' },
+    body: { backgroundColor: isDark ? colors.screenBackground : '#F6F4FA' },
+    sectionLabel: { color: isDark ? colors.textMuted : '#70687C' },
+    card: {
+      backgroundColor: isDark ? colors.cardBackground : '#FFFFFF',
+      borderColor: isDark ? colors.border : '#EAE4F1',
+    },
+    category: { color: isDark ? colors.primaryDark : '#7450A5' },
+    cardTitle: { color: isDark ? colors.text : '#30243F' },
+    description: { color: isDark ? colors.textMuted : '#696171' },
+    emergencyCard: {
+      backgroundColor: isDark ? '#2B151D' : '#FCEEF1',
+      borderColor: isDark ? '#5C2230' : '#F3DCE3',
+    },
+    emergencyTitle: { color: isDark ? '#FECDD3' : '#87364C' },
+    emergencyDescription: { color: isDark ? '#FDA4AF' : '#805361' },
+  };
+
   return (
-    <SafeAreaView style={styles.screen}>
+    <SafeAreaView style={[styles.screen, themeStyles.screen]}>
       <ScrollView
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
@@ -69,7 +91,13 @@ export default function GuidanceScreen({ onClose }: Props) {
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Fechar orientações"
-              onPress={() => router.back()}
+              onPress={() => {
+                if (onClose) {
+                  onClose();
+                } else {
+                  router.replace('/');
+                }
+              }}
               style={({ pressed }) => [
                 styles.closeButton,
                 pressed && styles.pressed,
@@ -88,18 +116,18 @@ export default function GuidanceScreen({ onClose }: Props) {
           </Text>
         </View>
 
-        <View style={styles.body}>
+        <View style={[styles.body, themeStyles.body]}>
           <View style={styles.content}>
-            <Text style={styles.sectionLabel}>
+            <Text style={[styles.sectionLabel, themeStyles.sectionLabel]}>
               Para consultar quando precisar
             </Text>
 
-            <View style={styles.emergencyCard}>
-              <Text accessibilityRole="header" style={styles.emergencyTitle}>
+            <View style={[styles.emergencyCard, themeStyles.emergencyCard]}>
+              <Text accessibilityRole="header" style={[styles.emergencyTitle, themeStyles.emergencyTitle]}>
                 Está em risco agora?
               </Text>
 
-              <Text style={styles.emergencyDescription}>
+              <Text style={[styles.emergencyDescription, themeStyles.emergencyDescription]}>
                 Em uma emergência, entre em contato com a Polícia Militar.
               </Text>
 
@@ -122,17 +150,17 @@ export default function GuidanceScreen({ onClose }: Props) {
             </View>
 
             {GUIDANCE.map(item => (
-              <View key={item.id} style={styles.card}>
+              <View key={item.id} style={[styles.card, themeStyles.card]}>
                 <View style={styles.categoryRow}>
                   <View style={styles.categoryMark} />
-                  <Text style={styles.category}>{item.category}</Text>
+                  <Text style={[styles.category, themeStyles.category]}>{item.category}</Text>
                 </View>
 
-                <Text accessibilityRole="header" style={styles.cardTitle}>
+                <Text accessibilityRole="header" style={[styles.cardTitle, themeStyles.cardTitle]}>
                   {item.title}
                 </Text>
 
-                <Text style={styles.description}>
+                <Text style={[styles.description, themeStyles.description]}>
                   {item.description}
                 </Text>
               </View>
@@ -146,7 +174,7 @@ export default function GuidanceScreen({ onClose }: Props) {
         activeTab="orientacoes"
         onTabPress={(tab) => {
           if (tab === 'orientacoes') return;
-          router.push(tab === 'delegacias' ? '/delegacias' : tab === 'telefones' ? '/telefones' : '/');
+          router.replace(tab === 'delegacias' ? '/delegacias' : tab === 'telefones' ? '/telefones' : '/');
         }}
         onPanicPress={() => router.push('/emergency')}
       />

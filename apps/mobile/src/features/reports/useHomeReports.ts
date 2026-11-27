@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 
 import type { Coordinates } from "../map/types";
+import type { Schemas } from "../../services/api/contracts";
+import { reportsService } from "../../services/api/reports";
+import { secureStore } from "../../storage/secureStore";
 
 import {
   coordinatesLabel,
@@ -96,6 +99,34 @@ export function useHomeReports({
 
   function selectReport(report: DangerReport) {
     setSelectedId(report.id);
+
+    if (
+      !report.id.startsWith("local-") &&
+      !report.id.startsWith("demo-") &&
+      !report.id.startsWith("ssp-")
+    ) {
+      void reportsService
+        .listComments(report.id)
+        .then((items) => {
+          setReports((previous) =>
+            previous.map((r) =>
+              r.id === report.id
+                ? {
+                    ...r,
+                    comments: items.map((c) => ({
+                      id: c.id,
+                      author: c.author || "Usuária",
+                      text: c.text || "",
+                      createdAt: c.created_at,
+                      parentId: c.parent_id ?? undefined,
+                    })),
+                  }
+                : r,
+            ),
+          );
+        })
+        .catch(() => {});
+    }
   }
 
   function closeDetails() {
@@ -133,7 +164,7 @@ export function useHomeReports({
     setCreationSession(null);
   }
 
-  function createReport(data: CreateReportPayload) {
+  async function createReport(data: CreateReportPayload) {
     if (!creationSession) {
       throw new Error(
         "Abra novamente o formulário para publicar.",
@@ -160,28 +191,56 @@ export function useHomeReports({
       );
     }
 
+    const token = await secureStore.getAccessToken();
+    if (!token) {
+      throw new Error(
+        "Faça login para publicar um relato na comunidade.",
+      );
+    }
+
     const location = { ...data.location };
+    const addressRef =
+      data.address.trim() ||
+      `Local no mapa · ${coordinatesLabel(location)}`;
+    const todayIso = new Date().toISOString().split("T")[0];
+    const validPeriod: Schemas["IncidentPeriod"] =
+      data.period === "manha" ||
+      data.period === "tarde" ||
+      data.period === "noite" ||
+      data.period === "madrugada"
+        ? data.period
+        : "noite";
+
+    const fullDescription = data.addressDetail.trim()
+      ? `${description} (${data.addressDetail.trim()})`
+      : description;
+
+    const created = await reportsService.createReport({
+      location: {
+        latitude: location.latitude,
+        longitude: location.longitude,
+        address_reference: addressRef,
+      },
+      category: data.category as Schemas["ReportCategory"],
+      description: fullDescription,
+      incident_date: todayIso,
+      incident_period: validPeriod,
+      is_anonymous: data.isAnonymous,
+    });
 
     const report: DangerReport = {
-      id: nextId(),
-      category: data.category,
-      description,
-
-      // Agora usa o endereço escolhido DENTRO do formulário.
+      id: created.id,
+      source: "app",
+      category: created.category,
+      description: created.description || description,
       location,
-      address:
-        data.address.trim() ||
-        `Local no mapa · ${coordinatesLabel(location)}`,
-
+      address: addressRef,
       addressDetail: data.addressDetail.trim(),
-      period: data.period,
-
-      isAnonymous: data.isAnonymous,
-      author: data.isAnonymous
-        ? "Anônima"
-        : authorName,
-
-      createdAt: new Date().toISOString(),
+      period: created.incident_period,
+      incidentDate: created.incident_date,
+      isAnonymous: created.is_anonymous,
+      author: created.is_anonymous ? "Anônima" : authorName,
+      createdAt: created.created_at,
       confirmations_count: 0,
       confirmedByMe: false,
       comments: [],
@@ -194,11 +253,35 @@ export function useHomeReports({
     setCameraRevision((previous) => previous + 1);
 
     setNotice(
-      "Relato publicado no local selecionado.",
+      "Relato publicado com sucesso.",
     );
   }
 
-  function toggleConfirmation(id: string) {
+  function extractInteractionError(error: unknown): string {
+    const status = (error as { response?: { status?: number } })?.response?.status;
+    if (status === 403) {
+      return "Você não pode confirmar ou denunciar o seu próprio relato.";
+    }
+    if (status === 401) {
+      return "Faça login para confirmar ou denunciar relatos.";
+    }
+    if (status === 409) {
+      return "Você já registrou outro tipo de interação neste relato.";
+    }
+    return "Não foi possível concluir a ação. Tente novamente.";
+  }
+
+  async function toggleConfirmation(id: string): Promise<string | void> {
+    if (!id.startsWith("local-") && !id.startsWith("demo-")) {
+      try {
+        await reportsService.confirmReport(id);
+      } catch (error) {
+        const msg = extractInteractionError(error);
+        setNotice(msg);
+        return msg;
+      }
+    }
+
     setReports((previous) =>
       previous.map((report) => {
         if (report.id !== id) return report;
@@ -216,7 +299,22 @@ export function useHomeReports({
     );
   }
 
-  function addComment(
+  async function reportAbuse(id: string): Promise<string | void> {
+    if (!id.startsWith("local-") && !id.startsWith("demo-")) {
+      try {
+        await reportsService.reportAbuse(id);
+      } catch (error) {
+        const msg = extractInteractionError(error);
+        setNotice(msg);
+        return msg;
+      }
+    }
+    const msg = "Denúncia registrada. Obrigada por ajudar a comunidade.";
+    setNotice(msg);
+    return msg;
+  }
+
+  async function addComment(
     reportId: string,
     text: string,
     parentId?: string,
@@ -225,11 +323,27 @@ export function useHomeReports({
 
     if (!normalized) return;
 
+    let commentId = nextId();
+    let createdAt = new Date().toISOString();
+
+    if (!reportId.startsWith("local-") && !reportId.startsWith("demo-")) {
+      try {
+        const created = await reportsService.addComment(reportId, {
+          text: normalized,
+          parent_id: parentId ?? null,
+        });
+        commentId = created.id;
+        createdAt = created.created_at;
+      } catch {
+        return;
+      }
+    }
+
     const comment = {
-      id: nextId(),
+      id: commentId,
       author: authorName,
       text: normalized,
-      createdAt: new Date().toISOString(),
+      createdAt,
       parentId,
       isMine: true,
     };
@@ -324,6 +438,7 @@ export function useHomeReports({
     createReport,
 
     toggleConfirmation,
+    reportAbuse,
     addComment,
     loadExamples,
 

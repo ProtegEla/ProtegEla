@@ -177,8 +177,8 @@ class RouteRiskEvaluator:
                 x, y = geometry["coordinates"]
                 return west <= x <= east and south <= y <= north
 
-            async with asyncio.timeout(5):
-                rows, incidents = await self.risk_service.snapshot()
+            async with asyncio.timeout(12):
+                rows, incidents = await self.risk_service.snapshot(bounds=bounds)
                 if not any(inside(row["location"]) for row in rows):
                     return [RouteRisk(status="no_mapped_data") for _ in routes]
                 incidents = [

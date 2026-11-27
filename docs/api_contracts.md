@@ -92,6 +92,7 @@ As duas rotas aceitam JSON e são públicas.
 | --- | --- | --- |
 | `POST /api/v1/auth/forgot-password` | `{"email":"usuaria@example.com"}` | `200` para uma solicitação válida e `422` para corpo inválido. |
 | `POST /api/v1/auth/reset-password` | `{"token":"<token recebido por e-mail>","new_password":"NovaSenha@123"}` | `200` após redefinir a senha, `401` para token inválido, expirado ou já usado e `422` para corpo inválido ou senha fora da política RN08. |
+| `POST /api/v1/auth/change-password` | `{"current_password":"Senha@123","new_password":"NovaSenha@123"}` | **Autenticada (JWT).** `200` (`{"message":"Senha alterada com sucesso."}`), `401` para senha atual incorreta e `422` para nova senha fora da política RN08. |
 
 O `200` de `forgot-password` retorna `{"message":"Se o e-mail estiver cadastrado, você receberá um link para redefinir sua senha."}`, inclusive para e-mails desconhecidos e em caso de falha no envio. Para confirmar a entrega, confira a caixa de entrada do destinatário.
 
@@ -1097,3 +1098,15 @@ não repetir automaticamente após timeout. Sucesso privado usa `no-store`.
 
 Validação: 132 testes passaram, incluindo PostgreSQL/PostGIS real, concorrência,
 expiração, isolamento entre contas e upgrade/downgrade/check do Alembic.
+
+
+---
+
+## 18. Contatos de emergência da usuária autenticada
+
+| Rota | Métodos | Descrição |
+| --- | --- | --- |
+| `/api/v1/users/me/emergency-contacts` | `GET`, `PUT` | Lista ou substitui os contatos de emergência (até 3) da usuária autenticada (JWT obrigatório). |
+
+- `GET`: retorna `{"contacts": [{"id": "<uuid>", "name": "...", "phone": "...", "is_primary": true}]}` com nomes e telefones descriptografados a partir da tabela `emergency_contacts`.
+- `PUT`: recebe `{"contacts": [{"name": "...", "phone": "...", "is_primary": true}]}` (0 a 3 contatos; se houver contatos, exige exatamente 1 principal e telefones com 10–15 dígitos). Substitui a lista da usuária no banco e retorna o mesmo formato do `GET`.

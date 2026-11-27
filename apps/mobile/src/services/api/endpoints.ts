@@ -9,14 +9,18 @@ export const ENDPOINTS = {
     LOGIN: "/auth/login",
     REFRESH: "/auth/refresh",
     FORGOT_PASSWORD: "/auth/forgot-password",
+    RESET_PASSWORD: "/auth/reset-password",
+    CHANGE_PASSWORD: "/auth/change-password",
   },
   // Usuárias
   USERS: {
     ME: "/users/me",
+    EMERGENCY_CONTACTS: "/users/me/emergency-contacts",
   },
   // Relatos
   REPORTS: {
     BASE: "/reports",
+    BY_ID: (id: string) => `/reports/${id}`,
     CONFIRM: (id: string) => `/reports/${id}/confirm`,
     REPORT_ABUSE: (id: string) => `/reports/${id}/report-abuse`,
     COMMENTS: (id: string) => `/reports/${id}/comments`,
@@ -24,6 +28,7 @@ export const ENDPOINTS = {
   // Zonas de Risco
   RISK_ZONES: {
     BASE: "/risk-zones",
+    INCIDENTS: (id: string) => `/risk-zones/${id}/incidents`,
   },
   // Rotas
   ROUTES: {

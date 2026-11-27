@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { BottomNavigation } from '../src/components/ui/BottomNavigation';
+import { useAppTheme } from '../src/theme';
 
 type Props = {
   onClose?: () => void;
@@ -51,11 +52,11 @@ const PHONES = [
 ];
 
 export default function UsefulPhonesScreen({ onClose }: Props) {
+  const { colors, isDark } = useAppTheme();
+
   function handleClose() {
     if (onClose) {
       onClose();
-    } else if (router.canGoBack()) {
-      router.back();
     } else {
       router.replace('/');
     }
@@ -72,8 +73,30 @@ export default function UsefulPhonesScreen({ onClose }: Props) {
     }
   }
 
+  const themeStyles = {
+    screen: { backgroundColor: isDark ? '#2A1B46' : '#7450A5' },
+    body: { backgroundColor: isDark ? colors.screenBackground : '#F7F5FB' },
+    hint: { color: isDark ? colors.textMuted : '#71687D' },
+    card: {
+      backgroundColor: isDark ? colors.cardBackground : '#FFFFFF',
+      borderColor: isDark ? colors.border : '#E9E2F0',
+    },
+    emergencyCard: {
+      backgroundColor: isDark ? '#2B151D' : '#FFFAFB',
+      borderColor: isDark ? '#5C2230' : '#EFD8DF',
+    },
+    cardTitle: { color: isDark ? colors.text : '#30243F' },
+    description: { color: isDark ? colors.textMuted : '#71687D' },
+    numberBadge: { backgroundColor: isDark ? colors.primaryLight : '#EEE7F6' },
+    number: { color: isDark ? colors.primaryDark : '#503273' },
+    redBadge: { backgroundColor: isDark ? '#4C1D24' : '#F8E4EA' },
+    redText: { color: isDark ? '#FCA5A5' : '#A53853' },
+    footer: { borderTopColor: isDark ? colors.border : '#E9E2F0' },
+    accentText: { color: isDark ? colors.primaryDark : '#503273' },
+  };
+
   return (
-    <SafeAreaView style={s.screen}>
+    <SafeAreaView style={[s.screen, themeStyles.screen]}>
       <ScrollView contentContainerStyle={s.scroll}>
         <View style={s.header}>
           <View style={s.navigation}>
@@ -96,9 +119,9 @@ export default function UsefulPhonesScreen({ onClose }: Props) {
           </Text>
         </View>
 
-        <View style={s.body}>
+        <View style={[s.body, themeStyles.body]}>
           <View style={s.content}>
-            <Text style={s.hint}>
+            <Text style={[s.hint, themeStyles.hint]}>
               Toque em um cartão para abrir o discador.
             </Text>
 
@@ -110,26 +133,27 @@ export default function UsefulPhonesScreen({ onClose }: Props) {
                 onPress={() => openDialer(phone.number)}
                 style={({ pressed }) => [
                   s.card,
-                  phone.emergency && s.emergencyCard,
+                  themeStyles.card,
+                  phone.emergency && [s.emergencyCard, themeStyles.emergencyCard],
                   pressed && s.pressed,
                 ]}
               >
                 <View style={s.row}>
-                  <Text style={s.cardTitle}>{phone.name}</Text>
-                  <View style={[s.numberBadge, phone.emergency && s.redBadge]}>
-                    <Text style={[s.number, phone.emergency && s.redText]}>
+                  <Text style={[s.cardTitle, themeStyles.cardTitle]}>{phone.name}</Text>
+                  <View style={[s.numberBadge, themeStyles.numberBadge, phone.emergency && [s.redBadge, themeStyles.redBadge]]}>
+                    <Text style={[s.number, themeStyles.number, phone.emergency && themeStyles.redText]}>
                       {phone.number}
                     </Text>
                   </View>
                 </View>
 
-                <Text style={s.description}>{phone.description}</Text>
+                <Text style={[s.description, themeStyles.description]}>{phone.description}</Text>
 
-                <View style={s.footer}>
-                  <Text style={[s.category, phone.emergency && s.redText]}>
+                <View style={[s.footer, themeStyles.footer]}>
+                  <Text style={[s.category, themeStyles.accentText, phone.emergency && themeStyles.redText]}>
                     {phone.emergency ? 'Emergência' : 'Orientação e apoio'}
                   </Text>
-                  <Text style={s.link}>Ligar ↗</Text>
+                  <Text style={[s.link, themeStyles.accentText]}>Ligar ↗</Text>
                 </View>
               </Pressable>
             ))}
@@ -142,7 +166,7 @@ export default function UsefulPhonesScreen({ onClose }: Props) {
         activeTab="telefones"
         onTabPress={(tab) => {
           if (tab === 'telefones') return;
-          router.push(
+          router.replace(
             tab === 'delegacias'
               ? '/delegacias'
               : tab === 'orientacoes'

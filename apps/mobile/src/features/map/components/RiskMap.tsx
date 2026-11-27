@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   ActivityIndicator,
@@ -8,6 +8,8 @@ import {
   Text,
   View,
 } from "react-native";
+
+import type { WebViewMessageEvent } from "react-native-webview";
 
 import type {
   Coordinates,
@@ -26,7 +28,14 @@ import {
   createPoliceStationIcon,
   createReportMarkerIcon,
   createSelectedLocationIcon,
+  getReportBorderColor,
 } from "../../reports/mapMarkerIcons";
+import { buildLeafletWebViewHtml } from "./leafletWebViewHtml";
+
+const NativeWebView: any =
+  Platform.OS !== "web"
+    ? require("react-native-webview").WebView
+    : null;
 
 export type MapTileStyle =
   | "clean"
@@ -324,6 +333,18 @@ export function RiskMap<
 
         routePane.style.zIndex = "450";
 
+        const updateMarkerScale = () => {
+          if (!containerRef.current) return;
+          const z = ownedMap.getZoom();
+          const scale = z >= 16 ? 0.85 : z >= 14 ? 0.62 : 0.42;
+          containerRef.current.style.setProperty(
+            "--protegela-marker-scale",
+            String(scale),
+          );
+        };
+        updateMarkerScale();
+        ownedMap.on("zoomend", updateMarkerScale);
+
         ownedMap.on("click", (event: any) => {
           const callbacks = callbacksRef.current;
 
@@ -537,13 +558,17 @@ export function RiskMap<
     reports.forEach((report) => {
       if (!isValidCoordinates(report.location)) return;
 
+      const borderColor = getReportBorderColor(report as {
+        source?: "app" | "ssp";
+        confirmations_count?: number;
+      });
       const marker = L.marker(
         [
           report.location.latitude,
           report.location.longitude,
         ],
         {
-          icon: createReportMarkerIcon(L, report.category),
+          icon: createReportMarkerIcon(L, report.category, borderColor),
           title: report.category,
           keyboard: interactive,
           interactive,
@@ -781,6 +806,148 @@ export function RiskMap<
     });
   }, [ready, riskZones, interactive]);
 
+  const webViewRef = useRef<any>(null);
+  const [webViewReady, setWebViewReady] = useState(false);
+
+  const dataRef = useRef({ reports, supportLocations });
+  useEffect(() => {
+    dataRef.current = { reports, supportLocations };
+  }, [reports, supportLocations]);
+
+  const initialWebViewHtml = useMemo(() => {
+    if (Platform.OS === "web") return "";
+    return buildLeafletWebViewHtml(
+      initialViewRef.current.center,
+      initialViewRef.current.zoom,
+      TILE_PROVIDERS,
+    );
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS === "web" || !webViewReady || !webViewRef.current) return;
+    if (!isValidCoordinates(center) || !Number.isFinite(zoom)) return;
+    webViewRef.current.injectJavaScript(
+      `window.flyToView && window.flyToView(${JSON.stringify(center)}, ${zoom}); true;`,
+    );
+  }, [
+    webViewReady,
+    center.latitude,
+    center.longitude,
+    zoom,
+    cameraRevision,
+  ]);
+
+  useEffect(() => {
+    if (Platform.OS === "web" || !webViewReady || !webViewRef.current) return;
+    const payload = {
+      mapStyle,
+      interactive,
+      isDark,
+      userLocation:
+        userLocation && isValidCoordinates(userLocation) ? userLocation : null,
+      selectedLocation:
+        selectedLocation && isValidCoordinates(selectedLocation)
+          ? selectedLocation
+          : null,
+      destinationLocation:
+        destinationLocation && isValidCoordinates(destinationLocation)
+          ? destinationLocation
+          : null,
+      reports: reports
+        .filter((r) => isValidCoordinates(r.location))
+        .map((r, index) => ({
+          ...r,
+          id: (r as { id?: string }).id ?? `idx-${index}`,
+        })),
+      supportLocations: supportLocations.filter((l) =>
+        isValidCoordinates({ latitude: l.latitude, longitude: l.longitude }),
+      ),
+      routes,
+      selectedRouteId,
+      riskZones,
+      hasSelectReport: Boolean(callbacksRef.current.onSelectReport),
+      hasSelectSupport: Boolean(callbacksRef.current.onSelectSupportLocation),
+    };
+    webViewRef.current.injectJavaScript(
+      `window.updateMapState && window.updateMapState(${JSON.stringify(payload)}); true;`,
+    );
+  }, [
+    webViewReady,
+    mapStyle,
+    interactive,
+    isDark,
+    userLocation,
+    selectedLocation,
+    destinationLocation,
+    reports,
+    supportLocations,
+    routes,
+    selectedRouteId,
+    riskZones,
+  ]);
+
+  const handleWebViewMessage = (event: WebViewMessageEvent) => {
+    try {
+      const msg = JSON.parse(event.nativeEvent.data);
+      if (msg.type === "ready") {
+        setWebViewReady(true);
+        return;
+      }
+      if (msg.type === "mapClick") {
+        const callbacks = callbacksRef.current;
+        if (!callbacks.interactive) return;
+        const coords: Coordinates = msg.payload;
+        if (isValidCoordinates(coords)) {
+          (callbacks.onMapPress ?? callbacks.onMapClick)?.(coords);
+        }
+        return;
+      }
+      if (msg.type === "selectReport") {
+        const validReports = dataRef.current.reports.filter((r) =>
+          isValidCoordinates(r.location),
+        );
+        const target = validReports.find(
+          (r, index) =>
+            ((r as { id?: string }).id ?? `idx-${index}`) === msg.payload?.id,
+        );
+        if (target) callbacksRef.current.onSelectReport?.(target);
+        return;
+      }
+      if (msg.type === "selectSupport") {
+        const target = dataRef.current.supportLocations.find(
+          (l) => l.id === msg.payload?.id,
+        );
+        if (target) callbacksRef.current.onSelectSupportLocation?.(target);
+      }
+    } catch {
+      // Ignora mensagens malformadas da WebView
+    }
+  };
+
+  if (Platform.OS !== "web" && NativeWebView) {
+    return (
+      <View style={s.container}>
+        <NativeWebView
+          ref={webViewRef}
+          originWhitelist={["*"]}
+          source={{ html: initialWebViewHtml }}
+          onMessage={handleWebViewMessage}
+          javaScriptEnabled
+          domStorageEnabled
+          mixedContentMode="always"
+          scrollEnabled={false}
+          style={s.webview}
+        />
+        {!webViewReady && (
+          <View style={s.status}>
+            <ActivityIndicator color="#8055B5" />
+            <Text style={s.fallbackText}>Carregando mapa…</Text>
+          </View>
+        )}
+      </View>
+    );
+  }
+
   if (Platform.OS !== "web") {
     return (
       <View
@@ -861,6 +1028,12 @@ const s = StyleSheet.create({
     height: "100%",
     position: "relative",
     zIndex: 0,
+  },
+  webview: {
+    flex: 1,
+    width: "100%",
+    height: "100%",
+    backgroundColor: "transparent",
   },
   fallback: {
     flex: 1,

@@ -18,9 +18,12 @@ export interface ReportComment {
 
 export interface DangerReport extends RiskMapReport {
   id: string;
+  source?: "app" | "ssp";
   address: string;
   addressDetail: string;
   period: string;
+  incidentDate?: string;
+  incidentsCount?: number;
   isAnonymous: boolean;
   author: string;
   createdAt: string;
@@ -54,6 +57,11 @@ const CATEGORY_STYLES: Record<
     color: "#A16207",
     background: "#FFF3D7",
     symbol: "F",
+  },
+  Roubo: {
+    color: "#EA580C",
+    background: "#FFEDD5",
+    symbol: "R",
   },
   Violência: {
     color: "#B4233D",

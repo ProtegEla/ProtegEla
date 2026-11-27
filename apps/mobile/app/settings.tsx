@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   StyleSheet,
   Text,
@@ -13,6 +13,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { useAppTheme } from "../src/theme";
 import { Input, Button, BottomNavigation } from "../src/components/ui";
 import { useAuth } from "../src/features/auth/AuthContext";
+import { authService } from "../src/services/api/auth";
+import { usersService } from "../src/services/api/users";
 
 /**
  * Tela de Configurações do Usuário.
@@ -31,12 +33,31 @@ export default function SettingsScreen() {
   const [email, setEmail] = useState(user?.email || "");
 
   // ── 3 Contatos de Emergência ────────────────────────────────────────────────
-  const defaultPhone = process.env.EXPO_PUBLIC_EMERGENCY_PHONE || "11941943128";
   const [contacts, setContacts] = useState([
-    { name: "", phone: defaultPhone },
+    { name: "", phone: "" },
     { name: "", phone: "" },
     { name: "", phone: "" },
   ]);
+  const [savingContacts, setSavingContacts] = useState(false);
+  const [changingPassword, setChangingPassword] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    usersService
+      .getEmergencyContacts()
+      .then((items) => {
+        if (!active || !items.length) return;
+        const padded = [0, 1, 2].map((idx) => ({
+          name: items[idx]?.name ?? "",
+          phone: items[idx]?.phone ?? "",
+        }));
+        setContacts(padded);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const updateContact = (
     index: number,
@@ -69,7 +90,36 @@ export default function SettingsScreen() {
     setTimeout(() => setSavedSuccess(false), 3000);
   };
 
-  const handleChangePassword = () => {
+  const handleSaveContacts = async () => {
+    const valid = contacts
+      .map((c, idx) => ({
+        name: c.name.trim() || `Contato ${idx + 1}`,
+        phone: c.phone.replace(/[\s()\-]/g, ""),
+        is_primary: idx === 0,
+      }))
+      .filter((c) => c.phone.length > 0);
+
+    if (valid.length > 0 && !valid.some((c) => c.is_primary)) {
+      valid[0].is_primary = true;
+    }
+
+    setSavingContacts(true);
+    try {
+      await usersService.updateEmergencyContacts(valid);
+      setSavedSuccess(true);
+      setTimeout(() => setSavedSuccess(false), 3000);
+    } catch (error: any) {
+      const msg =
+        error?.response?.data?.error?.message ||
+        error?.response?.data?.detail?.[0]?.msg ||
+        "Não foi possível salvar os contatos de emergência.";
+      Alert.alert("Erro ao salvar contatos", msg);
+    } finally {
+      setSavingContacts(false);
+    }
+  };
+
+  const handleChangePassword = async () => {
     if (!currentPassword) {
       Alert.alert(
         "Senha atual obrigatória",
@@ -85,11 +135,22 @@ export default function SettingsScreen() {
       Alert.alert("Senhas não coincidem", "A nova senha e a confirmação não são iguais.");
       return;
     }
-    // TODO: integrar com endpoint de troca de senha quando disponível
-    Alert.alert("Senha atualizada", "Sua senha foi alterada com sucesso.");
-    setCurrentPassword("");
-    setNewPassword("");
-    setConfirmNewPassword("");
+    setChangingPassword(true);
+    try {
+      await authService.changePassword(currentPassword, newPassword);
+      Alert.alert("Senha atualizada", "Sua senha foi alterada com sucesso.");
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmNewPassword("");
+    } catch (error: any) {
+      const msg =
+        error?.response?.data?.error?.message ||
+        error?.response?.data?.detail?.[0]?.msg ||
+        "Não foi possível alterar a senha. Verifique sua senha atual e os requisitos.";
+      Alert.alert("Erro ao alterar senha", msg);
+    } finally {
+      setChangingPassword(false);
+    }
   };
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -205,8 +266,9 @@ export default function SettingsScreen() {
         ))}
 
         <Button
-          title="Salvar contatos de emergência"
-          onPress={handleSaveProfile}
+          title={savingContacts ? "Salvando contatos..." : "Salvar contatos de emergência"}
+          onPress={handleSaveContacts}
+          disabled={savingContacts}
           style={{ marginTop: 8, marginBottom: 28 }}
         />
 
@@ -241,8 +303,9 @@ export default function SettingsScreen() {
         />
 
         <Button
-          title="Alterar senha"
+          title={changingPassword ? "Alterando senha..." : "Alterar senha"}
           onPress={handleChangePassword}
+          disabled={changingPassword}
           style={{ marginTop: 8, marginBottom: 40 }}
         />
       </ScrollView>

@@ -453,7 +453,12 @@ class RiskZoneService:
         return zones
 
     async def incidents(
-        self, zone_id: UUID, *, page: int = 1, page_size: int = 20
+        self,
+        zone_id: UUID,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+        bounds: tuple[float, float, float, float] | None = None,
     ) -> tuple[tuple[ZoneIncident, ...], int]:
         from src.core.exceptions import BusinessRuleException, EntityNotFoundException
 
@@ -464,7 +469,7 @@ class RiskZoneService:
             or not 1 <= page_size <= 100
         ):
             raise BusinessRuleException("Paginação inválida.", code="VALIDATION_ERROR")
-        for zone in await self.group():
+        for zone in await self.group(bounds):
             if zone.id == zone_id:
                 start = (page - 1) * page_size
                 return zone.incidents[start : start + page_size], len(zone.incidents)
@@ -555,16 +560,17 @@ class RoutingRiskService:
     def __init__(self, session):
         self.session = session
 
-    async def snapshot(self):
+    async def snapshot(self, bounds: tuple[float, float, float, float] | None = None):
         from datetime import datetime
         from zoneinfo import ZoneInfo
 
         today = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+        base_query = _GROUP_BBOX_QUERY.text if bounds is not None else _GROUP_QUERY.text
         # Um único statement garante a mesma visão de relatos, moderação e votos.
         query = text(
             """
             WITH grouped AS ("""
-            + _GROUP_QUERY.text
+            + base_query
             + """ )
             SELECT g.*, votes.confirmations,
                 greatest((r.created_at AT TIME ZONE 'America/Sao_Paulo')::date,
@@ -585,9 +591,15 @@ class RoutingRiskService:
             ORDER BY g.key LIMIT 10001
         """
         )
-        result = await self.session.execute(
-            query, {"cutoff": calendar_months_before(today, 6), "today": today}
-        )
+        params: dict[str, object] = {
+            "cutoff": calendar_months_before(today, 6),
+            "today": today,
+        }
+        if bounds is not None:
+            west, south, east, north = bounds
+            params.update({"west": west, "south": south, "east": east, "north": north})
+
+        result = await self.session.execute(query, params)
         rows = result.mappings().all()
         if len(rows) > 10000:
             raise ValueError("Limite de incidentes para avaliação excedido.")

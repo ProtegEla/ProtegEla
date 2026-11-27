@@ -317,3 +317,20 @@ async def reset_password(
     )
 
     await session.commit()
+
+
+async def change_password(
+    session: AsyncSession,
+    user_id: UUID,
+    current_password: str,
+    new_password: str,
+) -> None:
+    """Altera a senha da usuária autenticada após confirmar a senha atual."""
+
+    user = await session.scalar(select(User).where(User.id == user_id))
+    if user is None or not verify_password(current_password, user.password_hash):
+        raise UnauthorizedException(message="Senha atual incorreta.")
+
+    validate_password_strength(new_password)
+    user.password_hash = hash_password(new_password)
+    await session.commit()

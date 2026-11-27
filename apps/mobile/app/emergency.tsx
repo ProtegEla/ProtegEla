@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Pressable,
   StyleSheet,
@@ -11,6 +11,7 @@ import {
   Vibration,
   Linking,
 } from 'react-native';
+import { usersService } from '../src/services/api/users';
 
 type Props = {
   name?: string;
@@ -20,11 +21,37 @@ type Props = {
 };
 
 export default function CallingScreen({
-  name = 'Gabriela',
+  name,
   phone,
   onConfirm,
   onCancel,
 }: Props) {
+    const [resolvedContact, setResolvedContact] = useState<{
+      name: string;
+      phone: string;
+    }>({
+      name: name || 'Contato de emergência',
+      phone: phone || process.env.EXPO_PUBLIC_EMERGENCY_PHONE || '190',
+    });
+
+    useEffect(() => {
+      if (name && phone) {
+        setResolvedContact({ name, phone });
+        return;
+      }
+      let active = true;
+      usersService.getPrimaryEmergencyContact().then((contact) => {
+        if (!active) return;
+        setResolvedContact({
+          name: name || contact.name,
+          phone: phone || contact.phone,
+        });
+      });
+      return () => {
+        active = false;
+      };
+    }, [name, phone]);
+
     const shakeX = useRef(new Animated.Value(0)).current;
     useEffect(() => {
     const shake = Animated.loop(
@@ -76,7 +103,7 @@ export default function CallingScreen({
             return;
         }
 
-        const targetPhone = phone || process.env.EXPO_PUBLIC_EMERGENCY_PHONE || "11941943128";
+        const targetPhone = resolvedContact.phone;
         const url = `tel:${targetPhone}`;
         if (Platform.OS === 'web') {
             try {
@@ -116,13 +143,13 @@ export default function CallingScreen({
           </View>
 
           <Text style={styles.subtitle}>Ligando para</Text>
-          <Text style={styles.name}>“{name}”</Text>
+          <Text style={styles.name}>“{resolvedContact.name}”</Text>
         </View>
 
         <View style={styles.actions}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`Confirmar ligação para ${name}`}
+            accessibilityLabel={`Confirmar ligação para ${resolvedContact.name}`}
             onPress={handleConfirm}
             style={({ pressed }) => [
               styles.button,

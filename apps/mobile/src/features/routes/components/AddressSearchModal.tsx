@@ -276,6 +276,8 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
+    width: "100%",
+    overflow: "hidden",
     // Para logo acima da BottomNavigation (~72px), deixando o botão de emergência sempre visível
     bottom: 72,
     zIndex: 50,

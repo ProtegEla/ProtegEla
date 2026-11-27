@@ -1,6 +1,7 @@
 import { router } from 'expo-router';
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -9,6 +10,18 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { BottomNavigation } from '../src/components/ui/BottomNavigation';
+import { RiskMap } from '../src/features/map/components/RiskMap';
+import { useAppTheme } from '../src/theme';
+import {
+  DEFAULT_SP_COORDINATES,
+  useCurrentLocation,
+} from '../src/features/map/hooks/useCurrentLocation';
+import type { SupportLocation } from '../src/features/map/types';
+import { supportLocationsService } from '../src/services/api/supportLocations';
+import {
+  getCachedSupportLocations,
+  setCachedSupportLocations,
+} from '../src/storage/mapCache';
 
 export type PoliceStation = {
   id: string;
@@ -16,6 +29,8 @@ export type PoliceStation = {
   address: string;
   distanceLabel?: string;
   specialized?: boolean;
+  latitude?: number;
+  longitude?: number;
 };
 
 type Props = {
@@ -53,29 +68,117 @@ const PLACEHOLDER_STATIONS: PoliceStation[] = [
 export default function PoliceStationsScreen({
   onClose,
   stations,
-  addressLabel = 'Selecione um endereço',
+  addressLabel = 'Sua localização atual (GPS)',
   onSelectAddress,
   onSelectStation,
   mapContent,
 }: Props) {
-  // Garante que o valor usado em .length e .map seja um array.
-  // Um array vazio recebido continua vazio.
-  const stationList = Array.isArray(stations)
-    ? stations
-    : PLACEHOLDER_STATIONS;
+  const { colors, isDark } = useAppTheme();
+  const { location, loading: locationLoading } = useCurrentLocation();
+  const centerCoords = location || DEFAULT_SP_COORDINATES;
+  const [liveStations, setLiveStations] = useState<SupportLocation[]>([]);
+  const [loadingStations, setLoadingStations] = useState(false);
 
-  function handleClose() {
-    if (onClose) {
-      onClose();
-    } else if (router.canGoBack()) {
-      router.back();
+  useEffect(() => {
+    if (Array.isArray(stations)) return;
+    if (!location && locationLoading) return;
+    let active = true;
+
+    getCachedSupportLocations(centerCoords).then((cached) => {
+      if (!active) return;
+      if (cached?.items.length) {
+        setLiveStations(cached.items);
+      }
+      if (cached?.fresh) return;
+
+      setLoadingStations(!cached?.items.length);
+      supportLocationsService
+        .getNearby({
+          latitude: centerCoords.latitude,
+          longitude: centerCoords.longitude,
+          radius_meters: 5000,
+        })
+        .then((data) => {
+          if (!active) return;
+          const list = Array.isArray(data) ? data : [];
+          if (list.length > 0) {
+            setLiveStations(list);
+            void setCachedSupportLocations(centerCoords, list);
+          }
+        })
+        .catch(() => {
+          if (active && !cached?.items.length) setLiveStations([]);
+        })
+        .finally(() => {
+          if (active) setLoadingStations(false);
+        });
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [stations, location, locationLoading, centerCoords.latitude, centerCoords.longitude]);
+
+  const stationList: PoliceStation[] = Array.isArray(stations)
+    ? stations
+    : liveStations.map((item) => ({
+        id: item.id,
+        name: item.name,
+        address: item.address || 'Unidade policial próxima (OpenStreetMap)',
+        distanceLabel:
+          typeof item.distance_meters === 'number'
+            ? `${(item.distance_meters / 1000).toFixed(1).replace('.', ',')} km`
+            : undefined,
+        specialized: /mulher|ddm/i.test(item.name),
+        latitude: item.latitude,
+        longitude: item.longitude,
+      }));
+
+  function handleStationPress(station: PoliceStation) {
+    if (onSelectStation) {
+      onSelectStation(station);
+      return;
+    }
+    if (
+      typeof station.latitude === 'number' &&
+      typeof station.longitude === 'number'
+    ) {
+      router.replace({
+        pathname: '/',
+        params: {
+          focusLat: String(station.latitude),
+          focusLon: String(station.longitude),
+          focusLabel: station.name,
+        },
+      });
     } else {
       router.replace('/');
     }
   }
 
+  function handleClose() {
+    if (onClose) {
+      onClose();
+    } else {
+      router.replace('/');
+    }
+  }
+
+  const themeStyles = {
+    screen: { backgroundColor: isDark ? '#2A1B46' : '#7450A5' },
+    body: { backgroundColor: isDark ? colors.screenBackground : '#F7F5FB' },
+    card: {
+      backgroundColor: isDark ? colors.cardBackground : '#FFFFFF',
+      borderColor: isDark ? colors.border : '#E9E2F0',
+    },
+    titleText: { color: isDark ? colors.text : '#30243F' },
+    mutedText: { color: isDark ? colors.textMuted : '#71687D' },
+    badge: { backgroundColor: isDark ? colors.primaryLight : '#EEE7F6' },
+    badgeText: { color: isDark ? colors.primaryDark : '#503273' },
+  };
+
   return (
-    <SafeAreaView style={s.screen}>
+    <SafeAreaView style={[s.screen, themeStyles.screen]}>
       <ScrollView contentContainerStyle={s.scroll}>
         <View style={s.header}>
           <View style={s.navigation}>
@@ -103,9 +206,9 @@ export default function PoliceStationsScreen({
           </Text>
         </View>
 
-        <View style={s.body}>
+        <View style={[s.body, themeStyles.body]}>
           <View style={s.content}>
-            <View style={s.mapCard}>
+            <View style={[s.mapCard, themeStyles.card]}>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`Selecionar endereço. ${addressLabel}`}
@@ -117,65 +220,72 @@ export default function PoliceStationsScreen({
                 ]}
               >
                 <View style={s.addressContent}>
-                  <Text style={s.fieldLabel}>
+                  <Text style={[s.fieldLabel, themeStyles.mutedText]}>
                     ENDEREÇO DE REFERÊNCIA
                   </Text>
-                  <Text style={s.addressValue}>{addressLabel}</Text>
+                  <Text style={[s.addressValue, themeStyles.titleText]}>{addressLabel}</Text>
                 </View>
 
                 {onSelectAddress && (
-                  <Text style={s.arrow}>⌄</Text>
+                  <Text style={[s.arrow, { color: isDark ? colors.primaryDark : '#7450A5' }]}>⌄</Text>
                 )}
               </Pressable>
 
-              <View style={s.mapContainer}>
+              <View style={[s.mapContainer, { backgroundColor: isDark ? '#171022' : '#F0EBF7' }]}>
                 {mapContent ?? (
-                  <View style={s.placeholder}>
-                    <View style={s.pin}>
-                      <View style={s.pinCenter} />
-                    </View>
-
-                    <Text style={s.mapTitle}>Mapa da região</Text>
-                    <Text style={s.mapDescription}>
-                      Espaço reservado para o mapa.
-                    </Text>
-                  </View>
+                  <RiskMap
+                    center={centerCoords}
+                    zoom={14}
+                    userLocation={location}
+                    supportLocations={liveStations}
+                    mapStyle={isDark ? 'clean_dark' : 'clean'}
+                    interactive={false}
+                  />
                 )}
               </View>
             </View>
 
             <View style={s.sectionHeader}>
-              <Text accessibilityRole="header" style={s.sectionTitle}>
+              <Text accessibilityRole="header" style={[s.sectionTitle, themeStyles.titleText]}>
                 Unidades
               </Text>
 
-              <View style={s.countBadge}>
-                <Text style={s.countText}>
-                  {stationList.length}
+              <View style={[s.countBadge, themeStyles.badge]}>
+                <Text style={[s.countText, themeStyles.badgeText]}>
+                  {loadingStations ? '...' : stationList.length}
                 </Text>
               </View>
             </View>
+
+            {loadingStations && (
+              <View style={[s.card, themeStyles.card, { alignItems: 'center' }]}>
+                <ActivityIndicator size="small" color={colors.primaryPurple} />
+                <Text style={[s.description, themeStyles.mutedText]}>
+                  Buscando delegacias próximas à sua localização...
+                </Text>
+              </View>
+            )}
 
             {stationList.map(station => {
               const content = (
                 <>
                   <View style={s.row}>
-                    <Text style={s.cardTitle}>{station.name}</Text>
+                    <Text style={[s.cardTitle, themeStyles.titleText]}>{station.name}</Text>
 
                     {station.distanceLabel && (
-                      <View style={s.distanceBadge}>
-                        <Text style={s.distanceText}>
+                      <View style={[s.distanceBadge, { backgroundColor: isDark ? '#241B38' : '#F3EFF8' }]}>
+                        <Text style={[s.distanceText, themeStyles.badgeText]}>
                           {station.distanceLabel}
                         </Text>
                       </View>
                     )}
                   </View>
 
-                  <Text style={s.description}>{station.address}</Text>
+                  <Text style={[s.description, themeStyles.mutedText]}>{station.address}</Text>
 
                   {station.specialized && (
-                    <View style={s.specializedBadge}>
-                      <Text style={s.specializedText}>
+                    <View style={[s.specializedBadge, themeStyles.badge]}>
+                      <Text style={[s.specializedText, themeStyles.badgeText]}>
                         Atendimento à mulher
                       </Text>
                     </View>
@@ -183,32 +293,29 @@ export default function PoliceStationsScreen({
                 </>
               );
 
-              return onSelectStation ? (
+              return (
                 <Pressable
                   key={station.id}
                   accessibilityRole="button"
                   accessibilityLabel={`Selecionar ${station.name}, ${station.address}`}
-                  onPress={() => onSelectStation(station)}
+                  onPress={() => handleStationPress(station)}
                   style={({ pressed }) => [
                     s.card,
+                    themeStyles.card,
                     pressed && s.pressed,
                   ]}
                 >
                   {content}
                 </Pressable>
-              ) : (
-                <View key={station.id} style={s.card}>
-                  {content}
-                </View>
               );
             })}
 
             {stationList.length === 0 && (
-              <View style={s.card}>
-                <Text style={s.emptyTitle}>
+              <View style={[s.card, themeStyles.card]}>
+                <Text style={[s.emptyTitle, themeStyles.titleText]}>
                   Nenhuma unidade encontrada
                 </Text>
-                <Text style={s.description}>
+                <Text style={[s.description, themeStyles.mutedText]}>
                   Tente selecionar outro endereço de referência.
                 </Text>
               </View>
@@ -222,7 +329,7 @@ export default function PoliceStationsScreen({
         activeTab="delegacias"
         onTabPress={(tab) => {
           if (tab === 'delegacias') return;
-          router.push(
+          router.replace(
             tab === 'telefones'
               ? '/telefones'
               : tab === 'orientacoes'

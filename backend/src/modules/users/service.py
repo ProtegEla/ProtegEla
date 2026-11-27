@@ -2,11 +2,11 @@
 
 from uuid import UUID
 
-from sqlalchemy import func, literal, select, true, union_all
+from sqlalchemy import delete, func, literal, select, true, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import UnauthorizedException
-from src.core.security import decrypt_sensitive_field
+from src.core.security import decrypt_sensitive_field, encrypt_sensitive_field
 from src.modules.users.models import EmergencyContact, User
 
 
@@ -29,6 +29,59 @@ async def get_primary_emergency_phone(
     if encrypted_phone is None:
         return None
     return decrypt_sensitive_field(encrypted_phone)
+
+
+async def list_emergency_contacts(
+    session: AsyncSession, user_id: UUID
+) -> list[dict]:
+    """Lista os contatos de emergência da conta autenticada."""
+    await require_user(session, user_id)
+    rows = (
+        await session.scalars(
+            select(EmergencyContact)
+            .where(EmergencyContact.user_id == user_id)
+            .order_by(EmergencyContact.is_primary.desc(), EmergencyContact.name.asc())
+        )
+    ).all()
+    return [
+        {
+            "id": row.id,
+            "name": row.name,
+            "phone": decrypt_sensitive_field(row.phone_encrypted),
+            "is_primary": row.is_primary,
+        }
+        for row in rows
+    ]
+
+
+async def replace_emergency_contacts(
+    session: AsyncSession, user_id: UUID, contacts: list[dict]
+) -> list[dict]:
+    """Substitui os contatos de emergência da conta autenticada (até 3)."""
+    await require_user(session, user_id)
+    await session.execute(
+        delete(EmergencyContact).where(EmergencyContact.user_id == user_id)
+    )
+    created: list[EmergencyContact] = []
+    for item in contacts:
+        contact = EmergencyContact(
+            user_id=user_id,
+            name=item["name"].strip(),
+            phone_encrypted=encrypt_sensitive_field(item["phone"]),
+            is_primary=bool(item["is_primary"]),
+        )
+        session.add(contact)
+        created.append(contact)
+    await session.commit()
+    return [
+        {
+            "id": contact.id,
+            "name": contact.name,
+            "phone": decrypt_sensitive_field(contact.phone_encrypted),
+            "is_primary": contact.is_primary,
+        }
+        for contact in created
+    ]
 
 
 async def list_activity(

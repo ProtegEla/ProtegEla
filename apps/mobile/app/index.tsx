@@ -19,7 +19,7 @@ import {
   Alert,
 } from "react-native";
 
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 
 import { theme, useAppTheme } from "../src/theme";
@@ -43,6 +43,18 @@ import type {
 
 import { supportLocationsService } from "../src/services/api/supportLocations";
 import { riskZonesService } from "../src/services/api/riskZones";
+import { reportsService } from "../src/services/api/reports";
+import {
+  getEffectiveApiBaseUrl,
+  setCustomApiBaseUrl,
+  resetCustomApiBaseUrl,
+} from "../src/services/api/client";
+import {
+  getCachedSupportLocations,
+  setCachedSupportLocations,
+  getCachedSspReports,
+  setCachedSspReports,
+} from "../src/storage/mapCache";
 
 import {
   CreateReportBottomSheet,
@@ -72,6 +84,11 @@ import {
 
 export default function HomeScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{
+    focusLat?: string;
+    focusLon?: string;
+    focusLabel?: string;
+  }>();
 
   const { colors, isDark, toggleTheme } = useAppTheme();
   const { isLoggedIn, user, logout, updateNickname } = useAuth();
@@ -82,12 +99,15 @@ export default function HomeScreen() {
   const [isEditingNickname, setIsEditingNickname] = useState(false);
   const [tempNickname, setTempNickname] = useState(nickname);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [isApiModalOpen, setIsApiModalOpen] = useState(false);
+  const [apiUrlInput, setApiUrlInput] = useState("");
+  const [apiUrlFeedback, setApiUrlFeedback] = useState("");
 
-  const { location, refreshLocation } = useCurrentLocation();
+  const { location, loading: locationLoading, refreshLocation } = useCurrentLocation();
   const currentCoords = location || DEFAULT_SP_COORDINATES;
 
   const [mapCenter, setMapCenter] = useState<Coordinates>(currentCoords);
-  const [mapZoom, setMapZoom] = useState(16);
+  const [mapZoom, setMapZoom] = useState(17);
   const [cameraRevision, setCameraRevision] = useState(0);
 
   const [selectedAddressInfo, setSelectedAddressInfo] = useState<{
@@ -156,6 +176,26 @@ export default function HomeScreen() {
     navigation.isNavigating,
     navigation.activeRoute,
   ]);
+
+  useEffect(() => {
+    const lat = Number(params.focusLat);
+    const lon = Number(params.focusLon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+    const coords: Coordinates = { latitude: lat, longitude: lon };
+    if (!isValidCoordinates(coords)) return;
+
+    const label =
+      typeof params.focusLabel === "string" && params.focusLabel.trim()
+        ? params.focusLabel.trim()
+        : "Delegacia selecionada";
+
+    setIsRouteMode(false);
+    setSelectedAddressInfo({ label, coords });
+    setSearchQuery(label);
+    setMapCenter(coords);
+    setMapZoom(17);
+    setCameraRevision((value) => value + 1);
+  }, [params.focusLat, params.focusLon, params.focusLabel]);
 
   useEffect(() => {
     if (
@@ -233,7 +273,7 @@ export default function HomeScreen() {
     reportFlow.clearSelection();
 
     setMapCenter(currentCoords);
-    setMapZoom(16);
+    setMapZoom(17);
     setCameraRevision((value) => value + 1);
   };
 
@@ -293,6 +333,23 @@ export default function HomeScreen() {
         setRouteError(
           "Nenhuma rota encontrada para este destino.",
         );
+      } else {
+        const allRouteCoords = routes.flatMap((r) => r.coordinates);
+        void riskZonesService
+          .getAlongRoute(allRouteCoords)
+          .then((zones) => {
+            if (!mountedRef.current || requestId !== routeRequestRef.current) return;
+            const mapped = riskZonesService.toDangerReports(zones);
+            if (!mapped.length) return;
+            setSspReports((prev) => {
+              const existingIds = new Set(prev.map((item) => item.id));
+              const additions = mapped.filter((item) => !existingIds.has(item.id));
+              return additions.length ? [...prev, ...additions] : prev;
+            });
+          })
+          .catch(() => {
+            // Mantém os relatos já carregados caso a busca complementar falhe
+          });
       }
     } catch (error: any) {
       if (
@@ -367,7 +424,7 @@ export default function HomeScreen() {
     reportFlow.recenterMap();
 
     setMapCenter(currentCoords);
-    setMapZoom(16);
+    setMapZoom(17);
     setCameraRevision((value) => value + 1);
   };
 
@@ -457,6 +514,8 @@ export default function HomeScreen() {
   );
 
   useEffect(() => {
+    if (!location && locationLoading) return;
+
     let active = true;
 
     const coordinates: Coordinates = {
@@ -480,64 +539,188 @@ export default function HomeScreen() {
 
     if (isFetchingSupportRef.current) return;
 
-    const timer = setTimeout(() => {
-      isFetchingSupportRef.current = true;
-      lastFetchedCoordsRef.current = coordinates;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
-      supportLocationsService
-        .getNearby({
-          ...coordinates,
-          radius_meters: 5000,
-        })
-        .then((data) => {
-          if (!active) return;
-          const list = Array.isArray(data) ? data : [];
-          supportCacheRef.current = list;
-          setSupportLocations(list);
-        })
-        .catch((error) => {
-          if (active) {
-            console.warn(
-              "Não foi possível carregar os locais de apoio.",
-              error,
-            );
-          }
-        })
-        .finally(() => {
-          isFetchingSupportRef.current = false;
-        });
+    Promise.all([
+      getCachedSupportLocations(coordinates),
+      getCachedSspReports(coordinates),
+    ]).then(([cachedSupport, cachedSsp]) => {
+      if (!active) return;
 
-      riskZonesService
-        .getNearby(coordinates)
-        .then((zones) => {
-          if (active) {
-            setSspReports(riskZonesService.toDangerReports(zones));
-          }
-        })
-        .catch(() => {
-          // Zonas são complementares; não bloqueia o mapa em caso de falha transitória
-        });
-    }, 400);
+      if (cachedSupport?.items.length) {
+        supportCacheRef.current = cachedSupport.items;
+        setSupportLocations(cachedSupport.items);
+      }
+      if (cachedSsp?.items.length) {
+        setSspReports(cachedSsp.items);
+      }
+
+      const needSupport = !cachedSupport?.fresh;
+      const needSsp = !cachedSsp?.fresh;
+
+      if (!needSupport && !needSsp) {
+        lastFetchedCoordsRef.current = coordinates;
+        return;
+      }
+
+      timer = setTimeout(() => {
+        if (!active) return;
+        lastFetchedCoordsRef.current = coordinates;
+
+        if (needSupport) {
+          isFetchingSupportRef.current = true;
+          supportLocationsService
+            .getNearby({
+              ...coordinates,
+              radius_meters: 5000,
+            })
+            .then((data) => {
+              if (!active) return;
+              const list = Array.isArray(data) ? data : [];
+              if (list.length > 0) {
+                supportCacheRef.current = list;
+                setSupportLocations(list);
+                void setCachedSupportLocations(coordinates, list);
+              }
+            })
+            .catch((error) => {
+              if (active) {
+                console.warn(
+                  "Não foi possível carregar os locais de apoio.",
+                  error,
+                );
+              }
+            })
+            .finally(() => {
+              isFetchingSupportRef.current = false;
+            });
+        }
+
+        if (needSsp) {
+          riskZonesService
+            .getNearby(coordinates)
+            .then((zones) => {
+              if (!active) return;
+              const mapped = riskZonesService.toDangerReports(zones);
+              setSspReports(mapped);
+              void setCachedSspReports(coordinates, mapped);
+            })
+            .catch(() => {
+              // Zonas são complementares; mantém cache anterior em caso de falha transitória
+            });
+        }
+      }, 250);
+    });
 
     return () => {
       active = false;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
     };
   }, [
+    location,
+    locationLoading,
     currentCoords.latitude,
     currentCoords.longitude,
     haversineDistanceM,
   ]);
 
-  const combinedReports = useMemo(
-    () => [...reportFlow.reports, ...sspReports],
-    [reportFlow.reports, sspReports],
-  );
+  const combinedReports = useMemo(() => {
+    const all = [...reportFlow.reports, ...sspReports];
+    if (!isRouteMode || calculatedRoutes.length === 0) {
+      return all;
+    }
+
+    const activeRoutes = selectedRouteId
+      ? calculatedRoutes.filter((r) => r.id === selectedRouteId)
+      : calculatedRoutes;
+    const routesToCheck = activeRoutes.length > 0 ? activeRoutes : calculatedRoutes;
+
+    return all.filter((report) =>
+      routesToCheck.some((route) =>
+        route.coordinates.some(
+          (point) =>
+            haversineDistanceM(
+              report.location.latitude,
+              report.location.longitude,
+              point.latitude,
+              point.longitude,
+            ) <= 100,
+        ),
+      ),
+    );
+  }, [
+    reportFlow.reports,
+    sspReports,
+    isRouteMode,
+    calculatedRoutes,
+    selectedRouteId,
+    haversineDistanceM,
+  ]);
 
   const handleSelectMapReport = useCallback(
     (report: DangerReport) => {
       if (report.id.startsWith("ssp-")) {
         setSelectedSspReport(report);
+        riskZonesService
+          .getZoneIncidents(report.id, report.location)
+          .then((incidents) => {
+            if (!mountedRef.current || !incidents.length) return;
+            const latestDate = incidents
+              .map((item) => item.incident_date)
+              .filter(Boolean)
+              .sort((a, b) => b.localeCompare(a))[0];
+            if (!latestDate) return;
+            setSelectedSspReport((prev) =>
+              prev && prev.id === report.id
+                ? { ...prev, incidentDate: latestDate }
+                : prev,
+            );
+          })
+          .catch(() => {
+            // Mantém o modal aberto com os dados já carregados se a busca falhar
+          });
+      } else if (report.id.startsWith("appzone-")) {
+        setSelectedSspReport(report);
+        const zoneId = report.id.replace(/^appzone-/, "");
+        riskZonesService
+          .getZoneIncidents(zoneId, report.location)
+          .then(async (incidents) => {
+            if (!mountedRef.current || !incidents.length) return;
+            const appIncident =
+              incidents.find((item) => item.source === "app") ?? incidents[0];
+            if (!appIncident) return;
+            const [details, comments] = await Promise.all([
+              reportsService.getReportDetails(appIncident.id).catch(() => null),
+              reportsService.listComments(appIncident.id).catch(() => []),
+            ]);
+            if (!mountedRef.current) return;
+            setSelectedSspReport((prev) => {
+              if (!prev || prev.id !== report.id) return prev;
+              return {
+                ...prev,
+                id: appIncident.id,
+                description:
+                  details?.description ??
+                  appIncident.description ??
+                  prev.description,
+                incidentDate:
+                  details?.incident_date ??
+                  appIncident.incident_date ??
+                  prev.incidentDate,
+                period: details?.incident_period ?? prev.period,
+                confirmations_count:
+                  details?.confirmations_count ?? prev.confirmations_count,
+                comments: comments.map((c) => ({
+                  id: c.id,
+                  author: c.author || "Usuária",
+                  text: c.text || "",
+                  createdAt: c.created_at,
+                  parentId: c.parent_id ?? undefined,
+                })),
+              };
+            });
+          })
+          .catch(() => {});
       } else {
         setSelectedSspReport(null);
         reportFlow.selectReport(report);
@@ -545,6 +728,26 @@ export default function HomeScreen() {
     },
     [reportFlow],
   );
+
+  const handleOpenApiModal = async () => {
+    setIsDrawerOpen(false);
+    setApiUrlFeedback("");
+    const currentUrl = await getEffectiveApiBaseUrl();
+    setApiUrlInput(currentUrl);
+    setIsApiModalOpen(true);
+  };
+
+  const handleSaveApiUrl = async () => {
+    const saved = await setCustomApiBaseUrl(apiUrlInput);
+    setApiUrlInput(saved);
+    setApiUrlFeedback(`Endpoint salvo: ${saved}`);
+  };
+
+  const handleResetApiUrl = async () => {
+    const restored = await resetCustomApiBaseUrl();
+    setApiUrlInput(restored);
+    setApiUrlFeedback(`Endpoint padrão restaurado: ${restored}`);
+  };
 
   return (
     <SafeAreaView
@@ -689,7 +892,7 @@ export default function HomeScreen() {
           </View>
         )}
 
-        {!isRouteMode && !selectedAddressInfo && (
+        {!isRouteMode && !selectedAddressInfo && !isSearchModalOpen && (
           <View style={styles.fabsContainer}>
             <TouchableOpacity
               style={[
@@ -860,7 +1063,10 @@ export default function HomeScreen() {
                     onPress={toggleTheme}
                   />
 
-                  <ProfileMenuItem label="Histórico" />
+                  <ProfileMenuItem
+                    label="Endpoint da API"
+                    onPress={handleOpenApiModal}
+                  />
 
                   <ProfileMenuItem
                     label="Sair"
@@ -895,8 +1101,85 @@ export default function HomeScreen() {
             setSelectedSspReport(null);
             reportFlow.closeDetails();
           }}
-          onToggleConfirmation={reportFlow.toggleConfirmation}
-          onAddComment={reportFlow.addComment}
+          onToggleConfirmation={async (id) => {
+            if (selectedSspReport && selectedSspReport.id === id) {
+              if (id.startsWith("ssp-") || id.startsWith("appzone-")) return;
+              try {
+                await reportsService.confirmReport(id);
+                setSelectedSspReport((prev) =>
+                  prev && prev.id === id
+                    ? {
+                        ...prev,
+                        confirmedByMe: !prev.confirmedByMe,
+                        confirmations_count: Math.max(
+                          0,
+                          prev.confirmations_count + (prev.confirmedByMe ? -1 : 1),
+                        ),
+                      }
+                    : prev,
+                );
+              } catch (error) {
+                const status = (error as { response?: { status?: number } })?.response?.status;
+                if (status === 403) return "Você não pode confirmar ou denunciar o seu próprio relato.";
+                if (status === 401) return "Faça login para confirmar ou denunciar relatos.";
+                if (status === 409) return "Você já registrou outro tipo de interação neste relato.";
+                return "Não foi possível confirmar este relato.";
+              }
+              return;
+            }
+            return await reportFlow.toggleConfirmation(id);
+          }}
+          onReportAbuse={async (id) => {
+            if (selectedSspReport && selectedSspReport.id === id) {
+              if (id.startsWith("ssp-") || id.startsWith("appzone-")) return;
+              try {
+                await reportsService.reportAbuse(id);
+                return "Denúncia registrada. Obrigada por ajudar a comunidade.";
+              } catch (error) {
+                const status = (error as { response?: { status?: number } })?.response?.status;
+                if (status === 403) return "Você não pode confirmar ou denunciar o seu próprio relato.";
+                if (status === 401) return "Faça login para confirmar ou denunciar relatos.";
+                if (status === 409) return "Você já registrou outro tipo de interação neste relato.";
+                return "Não foi possível denunciar este relato.";
+              }
+            }
+            return await reportFlow.reportAbuse(id);
+          }}
+          onAddComment={async (reportId, text, parentId) => {
+            if (selectedSspReport && selectedSspReport.id === reportId) {
+              if (reportId.startsWith("ssp-") || reportId.startsWith("appzone-")) {
+                return;
+              }
+              try {
+                const created = await reportsService.addComment(reportId, {
+                  text: text.trim(),
+                  parent_id: parentId ?? null,
+                });
+                setSelectedSspReport((prev) =>
+                  prev && prev.id === reportId
+                    ? {
+                        ...prev,
+                        comments: [
+                          ...prev.comments,
+                          {
+                            id: created.id,
+                            author: user?.nickname || "Você",
+                            text: created.text || text.trim(),
+                            createdAt: created.created_at,
+                            parentId,
+                            isMine: true,
+                          },
+                        ],
+                      }
+                    : prev,
+                );
+              } catch {
+                // Mantém estado atual caso não esteja logado ou falhe
+              }
+              return;
+            }
+            await reportFlow.addComment(reportId, text, parentId);
+          }}
         />
 
         {!isRouteMode && selectedAddressInfo && (
@@ -1072,6 +1355,83 @@ export default function HomeScreen() {
           onSelectAddress={handleSelectSuggestion}
           initialQuery={searchQuery}
         />
+
+        <Modal
+          visible={isApiModalOpen}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setIsApiModalOpen(false)}
+        >
+          <View style={styles.apiModalBackdrop}>
+            <View
+              style={[
+                styles.apiModalCard,
+                {
+                  backgroundColor: isDark ? colors.surface : "#FFFFFF",
+                  borderColor: colors.border,
+                },
+              ]}
+            >
+              <View style={styles.apiModalHeader}>
+                <Text style={[styles.apiModalTitle, { color: colors.text }]}>
+                  Endpoint da API (Backend)
+                </Text>
+                <TouchableOpacity
+                  onPress={() => setIsApiModalOpen(false)}
+                  accessibilityLabel="Fechar configuração de API"
+                >
+                  <Ionicons name="close" size={22} color={colors.textMuted} />
+                </TouchableOpacity>
+              </View>
+
+              <Text style={[styles.apiModalHint, { color: colors.textMuted }]}>
+                Cole o endereço público ou local do backend (ex: https://xxx.trycloudflare.com ou http://192.168.0.10:8000).
+              </Text>
+
+              <TextInput
+                value={apiUrlInput}
+                onChangeText={setApiUrlInput}
+                placeholder="http://localhost:8000/api/v1"
+                placeholderTextColor={colors.textMuted}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="url"
+                style={[
+                  styles.apiModalInput,
+                  {
+                    color: colors.text,
+                    borderColor: colors.border,
+                    backgroundColor: isDark ? "#1B1329" : "#F8FAFC",
+                  },
+                ]}
+              />
+
+              {!!apiUrlFeedback && (
+                <Text style={[styles.apiModalFeedback, { color: "#10B981" }]}>
+                  {apiUrlFeedback}
+                </Text>
+              )}
+
+              <View style={styles.apiModalActions}>
+                <TouchableOpacity
+                  style={[styles.apiModalSecondaryBtn, { borderColor: colors.border }]}
+                  onPress={handleResetApiUrl}
+                >
+                  <Text style={[styles.apiModalSecondaryText, { color: colors.textMuted }]}>
+                    Restaurar padrão
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.apiModalPrimaryBtn, { backgroundColor: colors.primaryPurple }]}
+                  onPress={handleSaveApiUrl}
+                >
+                  <Text style={styles.apiModalPrimaryText}>Salvar</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
       </View>
 
       <BottomNavigation
@@ -1473,5 +1833,73 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderWidth: 1,
     marginRight: 6,
+  },
+  apiModalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(15, 10, 26, 0.55)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  apiModalCard: {
+    width: "100%",
+    maxWidth: 420,
+    borderRadius: 18,
+    borderWidth: 1,
+    padding: 18,
+  },
+  apiModalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  apiModalTitle: {
+    fontSize: 17,
+    fontWeight: "700",
+  },
+  apiModalHint: {
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 12,
+  },
+  apiModalInput: {
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    marginBottom: 10,
+  },
+  apiModalFeedback: {
+    fontSize: 12,
+    fontWeight: "600",
+    marginBottom: 10,
+  },
+  apiModalActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 10,
+    marginTop: 4,
+  },
+  apiModalSecondaryBtn: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  apiModalSecondaryText: {
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  apiModalPrimaryBtn: {
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+  },
+  apiModalPrimaryText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "700",
   },
 });
